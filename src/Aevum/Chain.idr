@@ -14,5 +14,5 @@ Chain ty (S a) = ty -> Chain ty a
 public export
 compose : (b : Nat) => Chain ty (S a) -> Chain ty b -> Chain ty (b + a)
 compose {b} m n = case b of
-  Z   => m n
+  Z => m n
   S u => \x => compose {b = u} m (n x)

@@ -29,10 +29,24 @@ data Path : Nat -> Type where
   Case : Path a -> Path a -> Path a
   Join : (b : Nat) => Path (S a) -> Path b -> Path (b + a)
 
+infixl 3 |.|
+infixl 1 |/|
+infixl 2 |+|
+
 ||| Syntactic sugar for Cons.
 public export
-(<+>) : Path a -> Consumer -> Path a
-(<+>) = Cons
+(|.|) : Path a -> Consumer -> Path a
+(|.|) = Cons
+
+||| Syntactic sugar for Case.
+public export
+(|/|) : Path a -> Path a -> Path a
+(|/|) = Case
+
+||| Syntactic sugar for Join.
+public export
+(|+|) : (b : Nat) => Path (S a) -> Path b -> Path (b + a)
+(|+|) = Join
 
 ||| Solve a path with given string.
 ||| Returns the result if succeeded.
@@ -41,10 +55,10 @@ solve : List Char -> Path a -> Maybe (Part a)
 solve str (Init ctx) = Just ctx
 solve str (Cons path cons) = case cons str of
   Just str' => solve str' path
-  Nothing   => Nothing
+  Nothing => Nothing
 solve str (Case p q) = case solve str p of
   Just ctx => Just ctx
-  Nothing  => solve str q
+  Nothing => solve str q
 solve str (Join p q) = case (solve str p, solve str q) of
   (Just r, Just s) => Just (compose r s)
-  _                => Nothing
+  _ => Nothing

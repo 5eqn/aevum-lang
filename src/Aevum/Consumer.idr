@@ -1,6 +1,6 @@
 module Aevum.Consumer
 
-import Aevum.Path
+import Aevum.Data.Path
 import Aevum.Util
 
 public export

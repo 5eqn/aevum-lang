@@ -1,27 +1,82 @@
 module Aevum.Main
 
-import Aevum.Data.Chain
-import Aevum.Data.Path
-import Aevum.Consumer
+import System.File.Handle
+import System.File.ReadWrite
+import Aevum.Path
 import Aevum.Util
 
-||| Node of parsed result.
-public export
+-- Parsed Datatype
+
 data Parsed : Type where
   EOF : Parsed
   Comment : Parsed -> Parsed
 
-||| Represent a comment of form "-- something" that ends with "\n".
+Show Parsed where
+  show EOF = "EOF"
+  show (Comment x) = "Comment (" ++ show x ++ ")"
+
+-- Consumer
+
+kwd : List Char -> Consumer ()
+kwd (a :: b) (c :: d) = if a == c then kwd b d else Nothing
+kwd [] rem = Just (rem, ())
+kwd _ _ = Nothing
+
+any : List Char -> Consumer ()
+any x (a :: b) = if a `elem` x then Just (b, ()) else Nothing
+any _ [] = Nothing
+
+until : List Char -> Consumer ()
+until x y@(_ :: z) = if pref x y then Just (y, ()) else until x z
+until _ [] = Nothing
+
+line : Consumer ()
+line (x :: y) = if x == '\n' then Just (y, ()) else line y
+line [] = Just ([], ())
+
+while : List Char -> Consumer ()
+while x y@(a :: z) = if a `elem` x then while x z else Just (y, ())
+while _ [] = Just ([], ())
+
+eof : Consumer ()
+eof [] = Just ([], ())
+eof _ = Nothing
+
+-- Path
+
 comment : Path Parsed [Parsed]
 comment =
-  |>| Comment |.| kwd ^ "--" |.| until ^ "\n"
+   kwd ^ "--" |.| line |.| |-| Comment
 
-||| Represent some blanks.
 blank : Path Parsed [Parsed]
 blank =
-  |>| id |.| while ^ " \t\r\n"
+   any ^ " \t\r\n" |.| while ^ " \t\r\n" |.| |-| id
 
-||| Represent the whole file.
+end : Path Parsed []
+end = eof |.| |-| EOF
+
 file : Path Parsed []
 file = comment |+| file |/|
-       blank |+| file
+       blank |+| file |/|
+       end
+
+-- Main
+
+onError : FileError -> IO String
+onError err = pure $ show err
+
+onOpen : File -> IO (Either String ())
+onOpen f = do
+  Right str <- fGetChars f 2000
+    | Left err => pure $ Left $ show err
+  let Just (rem, res) = solve ^ str $ file
+    | Nothing => pure $ Left "Error on parsing"
+  printLn res
+  pure $ Right ()
+
+main : IO ()
+main = do
+  res <- withFile "test.av" Read onError onOpen
+  case res of
+    Left err => printLn err
+    Right () => pure ()

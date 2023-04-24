@@ -5,7 +5,7 @@ import Aevum.Util
 infixr 3 |>=
 infixr 3 |>
 infixl 2 |+
-infixl 1 |/|
+infixl 1 //
 
 ||| Convert some types to a chain of functions.
 public export
@@ -37,7 +37,7 @@ Consumer ty = List Char -> Maybe (List Char, ty)
 ||| test : Path [Context]
 ||| test = let path1 = cons1 |>= \x => cons2 x |> Init ctx |+ test |+ test in
 |||        let path2 = cons3 |>= \z => Init ctx in
-|||        path1 |/| path2
+|||        path1 // path2
 ||| ```
 ||| This path will try `path1` first, going through `cons1` and `cons2 x`. 
 ||| Upon success, `Init ctx |+ test |+ test` will be evaluated.
@@ -49,7 +49,7 @@ data Path : Type -> List Type -> Type where
   Init : Chain ty ls -> Path ty ls
   (|>=) : Consumer a -> (a -> Path ty ls) -> Path ty ls
   (|+) : (b : List Type) => Path ty (x :: y) -> Lazy (Path x b) -> Path ty (b ++ y)
-  (|/|) : Path ty ls -> Lazy (Path ty ls) -> Path ty ls
+  (//) : Path ty ls -> Lazy (Path ty ls) -> Path ty ls
 
 ||| Syntactic suger of `|>=` without parameters.
 public export
@@ -81,6 +81,6 @@ solve a (p |+ q) = case solve a p of
     Just (c, y) => Just (c, compose x y)
     Nothing => Nothing
   Nothing => Nothing
-solve str (p |/| q) = case solve str p of
+solve str (p // q) = case solve str p of
   Just ctx => Just ctx
   Nothing => solve str q

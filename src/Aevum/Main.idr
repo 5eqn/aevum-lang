@@ -23,55 +23,31 @@ data Meaning : Type where
 
 -- Consumer
 
-kwd : List Char -> Consumer ()
-kwd (a :: b) (c :: d) = if a == c then kwd b d else Nothing
-kwd [] rem = Just (rem, ())
-kwd _ _ = Nothing
+exact' : List Char -> Consumer ()
+exact' (a :: b) (c :: d) = if a == c then exact' b d else Nothing
+exact' [] rem = Just (rem, ())
+exact' _ _ = Nothing
 
-any : List Char -> Consumer ()
-any x (a :: b) = if a `elem` x then Just (b, ()) else Nothing
-any _ [] = Nothing
+exact : String -> Consumer ()
+exact str = exact' (unpack str)
 
-until : List Char -> Consumer ()
-until x y@(_ :: z) = if pref x y then Just (y, ()) else until x z
-until _ [] = Nothing
-
-while : List Char -> Consumer ()
-while x y@(a :: z) = if a `elem` x then while x z else Just (y, ())
-while _ [] = Just ([], ())
-
-more : List Char -> Consumer ()
-more str = any str >> while str
-
-line : Consumer ()
-line (x :: y) = if x == '\n' then Just (y, ()) else line y
-line [] = Just ([], ())
-
-sep : Consumer ()
-sep = more ^ " \t\r\n"
-
-ident : Consumer (List Char)
-ident (a :: b) = if identChar a then case ident b of
+any : (Char -> Bool) -> Consumer (List Char)
+any pred (a :: b) = if pred a then case any pred b of
     Just (rem, res) => Just (rem, a :: res)
     Nothing => Nothing
-  else if spaceChar a then Just (a :: b, [])
-  else Nothing
-ident [] = Just ([], [])
+  else Just (a :: b, [])
+any _ _ = Just ([], [])
 
-num : Consumer (List Char)
-num (a :: b) = if numChar a then case num b of
+some : (Char -> Bool) -> Consumer (List Char)
+some pred (a :: b) = if pred a then case any pred b of
     Just (rem, res) => Just (rem, a :: res)
     Nothing => Nothing
-  else if spaceChar a then Just (a :: b, [])
   else Nothing
-num [] = Just ([], [])
+some _ _ = Nothing
 
 eof : Consumer ()
 eof [] = Just ([], ())
 eof _ = Nothing
-
-forceEOF : Consumer ()
-forceEOF _ = Just ([], ())
 
 -- Path
 
@@ -79,19 +55,21 @@ file : List (List Char, List Char) -> Path Parsed []
 file ls = 
   let end = eof 
         |> Init EOF in
-  let blank = sep 
-        |> Init id 
+  let blank = some spaceChar
+        |> Init id
         |+ file ls in
-  let comment = kwd ^ "--" 
-        |> line 
-        |> Init Comment 
+  let comment = exact "--"
+        |> any ^ neq '\n'
+        |> Init Comment
         |+ file ls in
-  let def = ident 
-        |>= \id => (sep >> kwd ^ "=" >> sep)
-        |> num
-        |>= \n => Init (Def id n) 
-        |+ file ((id, n) :: ls) in
-  end |/| blank |/| comment |/| def
+  let def = some identChar
+        |>= \id => any spaceChar
+        |> exact "="
+        |> any spaceChar
+        |> some numChar
+        |>= \n => Init ^ Def id n
+        |+ file ^ (id, n) :: ls in
+  end // blank // comment // def
 
 -- Main
 
@@ -102,7 +80,7 @@ onOpen : File -> IO (Either String ())
 onOpen f = do
   Right str <- fGetChars f 2000
     | Left err => pure $ Left $ show err
-  let Just (rem, res) = solve ^ str $ file []
+  let Just (rem, res) = solve (unpack str) (file [])
     | Nothing => pure $ Left "Error on parsing"
   printLn res
   pure $ Right ()

@@ -1,6 +1,6 @@
 module Aevum.Util
 
-infixl 14 ^
+infixr 4 ^
 
 ||| Returns true if the first argument is a prefix of the second.
 public export
@@ -9,10 +9,20 @@ pref (a :: b) (c :: d) = if (a == c) then pref b d else False
 pref _ [] = False
 pref [] _ = True
 
-||| Syntactic sugar for `unpack`.
+||| Equal function with letters.
 public export
-(^) : (List Char -> a) -> String -> a
-(^) fn str = fn (unpack str)
+eq : Eq a => a -> a -> Bool
+eq = (==)
+
+||| Reverted equal function.
+public export
+neq : Eq a => a -> a -> Bool
+neq = (/=)
+
+||| Function application with lower precedence.
+public export
+(^) : (a -> b) -> a -> b
+(^) = ($)
 
 ||| Returns true if given character is valid in identifiers.
 public export

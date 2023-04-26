@@ -27,8 +27,8 @@ compose {b} m n = case b of
 ||| returns the rest of the string.
 ||| If failed, returns Nothing.
 public export
-Consumer : Type -> Type
-Consumer ty = List Char -> Maybe (List Char, ty)
+Lexer : Type -> Type
+Lexer ty = List Char -> Maybe (List Char, ty)
 
 ||| Decision path of parsing.
 ||| Part will be selected on the branch that consumer agrees.
@@ -44,28 +44,30 @@ Consumer ty = List Char -> Maybe (List Char, ty)
 ||| Results of `Init ctx |+ test` will be composed first because `|+` is `infixl`,
 ||| and then the result of another `test`.
 ||| If failed, `path2` will be tried.
+||| NOTE: `|>=` is `infixr`, so only direct information is exposed;
+|||       `|+=` is `infixl`, so all information is exposed.
 public export
 data Path : Type -> List Type -> Type where
   Init : Chain ty ls -> Path ty ls
-  (|>=) : Consumer a -> (a -> Path ty ls) -> Path ty ls
+  (|>=) : Lexer a -> (a -> Path ty ls) -> Path ty ls
   (|+) : (b : List Type) => Path ty (x :: y) -> Lazy (Path x b) -> Path ty (b ++ y)
   (//) : Path ty ls -> Lazy (Path ty ls) -> Path ty ls
 
-||| Syntactic suger of `|>=` without parameters.
+||| Syntactic sugar of `|>=` without parameters.
 public export
-(|>) : Consumer a -> Path ty ls -> Path ty ls
+(|>) : Lexer a -> Path ty ls -> Path ty ls
 (|>) cons path = cons |>= \_ => path
 
 ||| Monadic consumer composition.
 public export
-(>>=) : Consumer a -> (a -> Consumer b) -> Consumer b
+(>>=) : Lexer a -> (a -> Lexer b) -> Lexer b
 (>>=) cons fn = \str => case cons str of
   Nothing => Nothing
   Just (rem, res) => fn res $ rem
 
 ||| Monadic consumer composition without parameters.
 public export
-(>>) : Consumer a -> Consumer b -> Consumer b
+(>>) : Lexer a -> Lexer b -> Lexer b
 (>>) x y = x >>= \_ => y
 
 ||| Solve a path with given string.

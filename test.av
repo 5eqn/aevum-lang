@@ -1,6 +1,8 @@
--- some comment here
+-- numeric
 xxy = 554
-yyz = 886
 
--- another comment
-test = 21
+-- string
+yyz = "test"
+
+-- reference
+test = xxy

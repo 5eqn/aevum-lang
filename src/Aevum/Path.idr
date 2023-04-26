@@ -1,62 +1,63 @@
 module Aevum.Path
 
+import Aevum.Lexing
 import Aevum.Util
 
-infixr 3 |>=
-infixr 3 |>
-infixl 2 |+
+infixr 2 |>=
+infixr 2 |>
+infixr 2 |+=
+infixr 2 |+
+infixr 2 |*=
+infixr 2 |*
 infixl 1 //
+infixl 10 |*|
+infixl 10 |+|
+
+-- Prod and Fun
+
+||| Non-empty list.
+public export
+data Pos : (listTy : Type) -> Type where
+  One : x -> Pos x
+  (|+|) : x -> Pos x -> Pos x
+
+||| Product types.
+public export
+data Prod : (tyList : Pos Type) -> Type where
+  Single : x -> Prod (One x)
+  (|*|) : x -> Prod ls -> Prod (x |+| ls)
 
 ||| Convert some types to a chain of functions.
 public export
-Chain : Type -> List Type -> Type
-Chain ty [] = ty
-Chain ty (hd :: tl) = hd -> Chain ty tl
+Fun : (returnTy : Type) -> (paramsTy : Pos Type) -> Type
+Fun ty (One x) = x -> ty
+Fun ty (hd |+| tl) = hd -> Fun ty tl
 
-||| Takes `f : A -> ... -> C` and `g : X -> ... -> Z -> A`,
-||| and returns `\x => ... => \z => f (g x ... z)`.
-||| The resulted function will have parameters of `g` filled first,
-||| and then the parameters of `f`.
+||| Serialization of product type of length 1.
 public export
-compose : (b : List Type) => Chain ty (x :: y) -> Chain x b -> Chain ty (b ++ y)
-compose {b} m n = case b of
-  [] => m n
-  u :: v => \x => compose {b = v} m (n x)
+Show a => Show (Prod (One a)) where
+  show (Single x) = show x
+
+||| Call a chain with parameters in a prod.
+public export
+call : Fun ty ls -> Prod ls -> Prod $ One ty
+call ctx prod = case prod of
+  Single x => Single $ ctx x
+  hd |*| tl => call (ctx hd) tl
+
+||| Stack an instance on a prod.
+public export
+stack : x -> Prod ls -> Prod (x |+| ls)
+stack x prod = x |*| prod
+
+-- Lexer
 
 ||| Consumes a string with given rule,
 ||| returns the rest of the string.
 ||| If failed, returns Nothing.
 public export
-Lexer : Type -> Type
+Lexer : (returnTy : Type) -> Type
 Lexer ty = List Char -> Maybe (List Char, ty)
-
-||| Decision path of parsing.
-||| Part will be selected on the branch that consumer agrees.
-||| For example, consider the following path:
-||| ```
-||| test : Path [Context]
-||| test = let path1 = cons1 |>= \x => cons2 x |> Init ctx |+ test |+ test in
-|||        let path2 = cons3 |>= \z => Init ctx in
-|||        path1 // path2
-||| ```
-||| This path will try `path1` first, going through `cons1` and `cons2 x`. 
-||| Upon success, `Init ctx |+ test |+ test` will be evaluated.
-||| Results of `Init ctx |+ test` will be composed first because `|+` is `infixl`,
-||| and then the result of another `test`.
-||| If failed, `path2` will be tried.
-||| NOTE: `|>=` is `infixr`, so only direct information is exposed;
-|||       `|+=` is `infixl`, so all information is exposed.
-public export
-data Path : Type -> List Type -> Type where
-  Init : Chain ty ls -> Path ty ls
-  (|>=) : Lexer a -> (a -> Path ty ls) -> Path ty ls
-  (|+) : (b : List Type) => Path ty (x :: y) -> Lazy (Path x b) -> Path ty (b ++ y)
-  (//) : Path ty ls -> Lazy (Path ty ls) -> Path ty ls
-
-||| Syntactic sugar of `|>=` without parameters.
-public export
-(|>) : Lexer a -> Path ty ls -> Path ty ls
-(|>) cons path = cons |>= \_ => path
 
 ||| Monadic consumer composition.
 public export
@@ -70,18 +71,52 @@ public export
 (>>) : Lexer a -> Lexer b -> Lexer b
 (>>) x y = x >>= \_ => y
 
-||| Solve a path with given string.
+-- Path
+
+||| Decision path of parsing.
+||| `Res n` initializes the result with `n`;
+||| `|>=` is the monadic composition of `Lexer` and `Path`;
+||| `|+=` is the monadic composition of `Path` and `Path`;
+||| `|*=` is the monadic composition of `Fun` and `Path`;
+||| `//` defines the alternative of a `Path`.
+public export
+data Path : (tyList : Pos Type) -> Type where
+  Res : ty -> Path (One ty)
+  (|>=) : Lexer a -> (a -> Path ls) -> Path ls
+  (|+=) : Path (One a) -> (a -> Path ls) -> Path (a |+| ls)
+  (|*=) : Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
+  (//) : Path ls -> Lazy (Path ls) -> Path ls
+
+||| `|>=` with dummy function.
+public export
+(|>) : Lexer a -> Path b -> Path b
+(|>) cons lex = cons |>= \_ => lex
+
+||| `|+=` with dummy function.
+public export
+(|+) : Path (One a) -> Path ls -> Path $ a |+| ls
+(|+) p q = p |+= \_ => q
+
+||| `|*=` with dummy function.
+public export
+(|*) : Fun ty ls -> Path ls -> Path $ One ty
+(|*) p q = p |*= \_ => q
+
+||| Solve a `Path` with given string.
 ||| Returns the result if succeeded.
 public export
-solve : List Char -> Path ty ls -> Maybe (List Char, Chain ty ls)
-solve str (Init ctx) = Just (str, ctx)
+solve : List Char -> Path ls -> Maybe (List Char, Prod ls)
+solve str (Res ctx) = Just (str, Single ctx)
 solve a (cons |>= fn) = case cons a of
   Just (b, x) => solve b (fn x)
   Nothing => Nothing
-solve a (p |+ q) = case solve a p of
-  Just (b, x) => case solve b q of
-    Just (c, y) => Just (c, compose x y)
+solve a (p |+= q) = case solve a p of
+  Just (b, (Single x)) => case solve b (q x) of
+    Just (c, y) => Just (c, stack x y)
     Nothing => Nothing
+  Nothing => Nothing
+solve a (p |*= q) = case solve a (q p) of
+  Just (c, y) => Just (c, call p y)
   Nothing => Nothing
 solve str (p // q) = case solve str p of
   Just ctx => Just ctx

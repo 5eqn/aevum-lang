@@ -8,14 +8,37 @@ import Aevum.Util
 -- Parsed Datatype
 
 mutual
-  data Cons : Pos (List Char) -> Type where
-    Uni : Cons (One $ unpack "U")
-    Base : (str : List Char) -> Cons (One $ unpack "Type")
-    Pi : (inst : Cons (One a)) -> (Cons (One (name inst)) -> Cons b) -> Cons (a |+| b)
+  ||| Represent a type.
+  ||| `Ty n`: `Type n`.
+  ||| `Lit $ unpack "Test"`: an instance of `Type 0` named "Test".
+  ||| `Fn {x = Lit $ unpack "Nat"} 3 (Lit $ unpack "Vect")`: `Vect 3`.
+  data Typed : Type where
+    Ty : Nat -> Typed
+    Lit : List Char -> Typed
+    Fn : (x : Typed) => Cons x -> Typed -> Typed
 
-  name : Cons (One str) -> List Char
-  name Uni = unpack "Type"
-  name (Base str) = str
+  ||| Constructor, or instance of a `Typed`.
+  ||| `a : Base (Lit $ unpack "Test")`: `val a` is `Lit $ unpack "Test"`.
+  ||| `b : Pi (Lit $ unpack "Nat") (\x -> a)`: `val (b ins)` is `Fn ins (val a)`.
+  ||| Note that when `a` is a Pi Type, `a x` can be used to construct `c` s.t. `val c` is `Fn _ _`.
+  data Cons : Typed -> Type where
+    Base : (ty : Typed) -> Cons ^ Ty ^ next ty
+    Pi : (pi : Cons ^ Ty n) -> (fn : Cons ^ val pi -> Cons ^ Ty m) -> (ins : Cons ^ val pi) -> Cons ^ Ty m
+
+  ||| Get the level of the type of a type to prevent self-referencing.
+  ||| For example, `ty` is instance of `Cons ^ Ty ^ next ty`.
+  ||| This makes sure that Godel's incompleteness theorem doesn't apply.
+  next : Typed -> Nat
+  next (Ty a) = a + 1
+  next (Lit _) = 0
+  next (Fn {x = a} _ b) = case a of
+    Ty n => max n (next b)
+    _ => next b
+
+  ||| As for now, everything that can be constructed is a type, so it's value can be found.
+  val : Cons rn -> Typed
+  val (Base ty) = ty
+  val (Pi pi fn ins) = Fn {x = val pi} ins (val (fn ins))
 
 data Parsed : Type where
   EOF : Parsed

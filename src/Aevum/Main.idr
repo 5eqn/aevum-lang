@@ -7,38 +7,67 @@ import Aevum.Util
 
 -- Parsed Datatype
 
+{-
+```
+data Test : Type where
+  Mk : Type -> Test
+
+foo : Test
+foo = Mk Nat
+
+bar : Test -> Type
+bar = (ins : Test) => Recv ins
+
+cased : Test -> Type
+cased = (ins : Test) => case ins of
+  Mk ty => Recv ty
+```
+
+'Type' => Base (Ty 0) : Cons (Ty 1)
+  val 'Type' = Ty 0
+'Test' => Base (Lit "Test" (val 'Type')) : Cons (val 'Type')
+  val 'Test' = Lit "Test" (val 'Type')
+'Mk' => Pi 'Type' (Base (Lit "Mk" (val 'Test'))) : (ins : Cons (val 'Type')) -> Cons (val 'Test')
+  val 'Mk ins' = Arg ins (Lit "Mk" (val 'Test'))
+'foo' => Base (Lit "foo" (val 'Test')) : Cons (val 'Test')
+  val 'foo' = Lit "foo" (val 'Test')
+  impl 'foo' = 'Mk' 'Nat' : Cons (val 'Test')
+'bar' => Pi 'Test' (Base (Lit "bar" (val 'Type'))) : (ins : Cons (val 'Test')) -> Cons (val 'Type')
+  val 'bar ins' = Arg ins (Lit "bar" (val 'Type'))
+  impl 'bar' = Pi 'Test' ('Recv' 'ins') : (ins : Cons (val 'Test')) -> Cons (val 'Type')
+-}
+
 mutual
-  ||| Represent a type.
+  ||| Represent a variable.
   ||| `Ty n`: `Type n`.
-  ||| `Lit $ unpack "Test"`: an instance of `Type 0` named "Test".
-  ||| `Fn {x = Lit $ unpack "Nat"} 3 (Lit $ unpack "Vect")`: `Vect 3`.
-  data Typed : Type where
-    Ty : Nat -> Typed
-    Lit : List Char -> Typed
-    Fn : (x : Typed) => Cons x -> Typed -> Typed
+  ||| `Lit (unpack "Test") (Ty 0)`: an instance of `Type 0` named "Test".
+  ||| `Arg {x = Lit (unpack "Nat") (Ty 0)} 3 (Lit (unpack "Vect") (Ty 0))`: `Vect 3`.
+  data Var : Type where
+    Ty : Nat -> Var
+    Lit : List Char -> Var -> Var
+    Arg : (x : Var) => Cons x -> Var -> Var
 
-  ||| Constructor, or instance of a `Typed`.
+  ||| Constructor, or instance of a `Var`.
   ||| `a : Base (Lit $ unpack "Test")`: `val a` is `Lit $ unpack "Test"`.
-  ||| `b : Pi (Lit $ unpack "Nat") (\x -> a)`: `val (b ins)` is `Fn ins (val a)`.
-  ||| Note that when `a` is a Pi Type, `a x` can be used to construct `c` s.t. `val c` is `Fn _ _`.
-  data Cons : Typed -> Type where
-    Base : (ty : Typed) -> Cons ^ Ty ^ next ty
-    Pi : (pi : Cons ^ Ty n) -> (fn : Cons ^ val pi -> Cons ^ Ty m) -> (ins : Cons ^ val pi) -> Cons ^ Ty m
+  ||| `b : Pi (Lit $ unpack "Nat") (\x -> a)`: `val (b ins)` is `Arg ins (val a)`.
+  ||| Note that when `a` is a Pi Type, `a x` can be used to construct `c` s.t. `val c` is `Arg _ _`.
+  data Cons : Var -> Type where
+    Base : (ty : Var) -> Cons ^ typeof ty
+    Pi : (pi : Cons ^ Ty n) -> (res : Cons m) -> (ins : Cons ^ val pi) -> Cons m
 
-  ||| Get the level of the type of a type to prevent self-referencing.
-  ||| For example, `ty` is instance of `Cons ^ Ty ^ next ty`.
+  ||| Get the type of a variable to prevent self-referencing.
+  ||| For example, `ty` is instance of `Cons ^ Ty ^ typeof ty`.
   ||| This makes sure that Godel's incompleteness theorem doesn't apply.
-  next : Typed -> Nat
-  next (Ty a) = a + 1
-  next (Lit _) = 0
-  next (Fn {x = a} _ b) = case a of
-    Ty n => max n (next b)
-    _ => next b
+  ||| TODO: currently `A -> B` is not a `Ty 0`.
+  typeof : Var -> Var
+  typeof (Ty a) = Ty $ a + 1
+  typeof (Lit _ ty) = ty
+  typeof (Arg {x = a} _ b) = typeof b
 
-  ||| As for now, everything that can be constructed is a type, so it's value can be found.
-  val : Cons rn -> Typed
+  ||| Get the value of a variable from a constructor.
+  val : Cons rn -> Var
   val (Base ty) = ty
-  val (Pi pi fn ins) = Fn {x = val pi} ins (val (fn ins))
+  val (Pi pi res ins) = Arg {x = val pi} ins (val res)
 
 data Parsed : Type where
   EOF : Parsed

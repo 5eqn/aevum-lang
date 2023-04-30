@@ -33,6 +33,12 @@ Fun : (returnTy : Type) -> (paramsTy : Pos Type) -> Type
 Fun ty (One x) = x -> ty
 Fun ty (hd |+| tl) = hd -> Fun ty tl
 
+||| Composition of big function.
+public export
+comp : (ls : Pos Type) => (a -> b) -> Fun a ls -> Fun b ls
+comp {ls = One x} f g = f . g
+comp {ls = hd |+| tl} f g = \h => comp f (g h)
+
 ||| Serialization of product type of length 1.
 public export
 Show a => Show (Prod (One a)) where
@@ -84,8 +90,16 @@ data Path : (tyList : Pos Type) -> Type where
   Res : ty -> Path (One ty)
   (|>=) : Lexer a -> (a -> Path ls) -> Path ls
   (|+=) : Path (One a) -> (a -> Path ls) -> Path (a |+| ls)
-  (|*=) : Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
+  (|*=) : (ls : Pos Type) => Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
   (//) : Path ls -> Lazy (Path ls) -> Path ls
+
+||| Mapping of path.
+public export
+(<$>) : (a -> b) -> Path (One a) -> Path (One b)
+(<$>) f (Res x) = Res (f x)
+(<$>) f (x |>= y) = x |>= (\z => f <$> y z)
+(<$>) f (x |*= y) = (comp f x) |*= (\z => ?help)
+(<$>) f (x // y) = (f <$> x) // (f <$> y)
 
 ||| `|>=` with dummy function.
 public export
@@ -99,7 +113,7 @@ public export
 
 ||| `|*=` with dummy function.
 public export
-(|*) : Fun ty ls -> Path ls -> Path $ One ty
+(|*) : (ls : Pos Type) => Fun ty ls -> Path ls -> Path $ One ty
 (|*) p q = p |*= \_ => q
 
 ||| Solve a `Path` with given string.

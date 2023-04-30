@@ -10,76 +10,65 @@ import Aevum.Util
 {-
 ```
 data Test : Type where
-  Mk : Type -> Test
-
-foo : Test
-foo = Mk Nat
-
-bar : Test -> Type
-bar = (ins : Test) => Recv ins
+  X : Test
+  Y : Test -> Test
 
 cased : Test -> Type
-cased = (ins : Test) => case ins of
-  Mk ty => Recv ty
+cased = \n => case n of
+  X => Type
+  Y _ => Test
+
+test : (n : Test) -> cased n
+test = \n => case n of
+  X => Test
+  Y _ => X
 ```
 
-'Type' => Base (Ty 0) : Cons (Ty 1)
-  val 'Type' = Ty 0
-'Test' => Base (Lit "Test" (val 'Type')) : Cons (val 'Type')
-  val 'Test' = Lit "Test" (val 'Type')
-'Mk' => Pi 'Type' (Base (Lit "Mk" (val 'Test'))) : (ins : Cons (val 'Type')) -> Cons (val 'Test')
-  val 'Mk ins' = Arg ins (Lit "Mk" (val 'Test'))
-'foo' => Base (Lit "foo" (val 'Test')) : Cons (val 'Test')
-  val 'foo' = Lit "foo" (val 'Test')
-  impl 'foo' = 'Mk' 'Nat' : Cons (val 'Test')
-'bar' => Pi 'Test' (Base (Lit "bar" (val 'Type'))) : (ins : Cons (val 'Test')) -> Cons (val 'Type')
-  val 'bar ins' = Arg ins (Lit "bar" (val 'Type'))
-  impl 'bar' = Pi 'Test' ('Recv' 'ins') : (ins : Cons (val 'Test')) -> Cons (val 'Type')
+Only put these into map upon correct declaration:
+
+<Type> | Ty
+<Test> | Ins (Id "Type")
+<X> | Ins (Id "Test")
+<Y> | Pi (Id "") (Ins (Id "Test")) (Ins (Id "Test"))
+<cased> | Pi (Id "") (Ins (Id "Test")) (Ins (Id "Type"))
+<cased> = Pi (Id "n") Hole (App (Alt (Pi (Id "X") Hole (Id "Type")) (Pi (App (Id "Y") (Id "_")) Hole (Id "Test"))) (Id "n"))
+
+1. When constructing `App`, check the types of involved elements.
+   Reader function is called with a `Term` argument to be unified with generated result.
+2. In declaration-definition structure, unify both types.
 -}
 
-mutual
-  ||| Represent a variable.
-  ||| `Ty n`: `Type n`.
-  ||| `Lit (unpack "Test") (Ty 0)`: an instance of `Type 0` named "Test".
-  ||| `Arg {x = Lit (unpack "Nat") (Ty 0)} 3 (Lit (unpack "Vect") (Ty 0))`: `Vect 3`.
-  data Var : Type where
-    Ty : Nat -> Var
-    Lit : List Char -> Var -> Var
-    Arg : (x : Var) => Cons x -> Var -> Var
+data Term : Type where
+  Ty : Term
+  Ins : (type : Term) -> Term
+  Id : (id : List Char) -> Term
+  Pi : (arg : Term) -> (desc : Term) -> (body : Term) -> Term
+  Alt : (prim : Term) -> (alt : Term) -> Term
+  App : (func : Term) -> (arg : Term) -> Term
+  Hole : Term
+  Amb : Term -> Term -> Term
 
-  ||| Constructor, or instance of a `Var`.
-  ||| `a : Base (Lit $ unpack "Test")`: `val a` is `Lit $ unpack "Test"`.
-  ||| `b : Pi (Lit $ unpack "Nat") (\x -> a)`: `val (b ins)` is `Arg ins (val a)`.
-  ||| Note that when `a` is a Pi Type, `a x` can be used to construct `c` s.t. `val c` is `Arg _ _`.
-  data Cons : Var -> Type where
-    Base : (ty : Var) -> Cons ^ typeof ty
-    Pi : (pi : Cons ^ Ty n) -> (res : Cons m) -> (ins : Cons ^ val pi) -> Cons m
-
-  ||| Get the type of a variable to prevent self-referencing.
-  ||| For example, `ty` is instance of `Cons ^ Ty ^ typeof ty`.
-  ||| This makes sure that Godel's incompleteness theorem doesn't apply.
-  ||| TODO: currently `A -> B` is not a `Ty 0`.
-  typeof : Var -> Var
-  typeof (Ty a) = Ty $ a + 1
-  typeof (Lit _ ty) = ty
-  typeof (Arg {x = a} _ b) = typeof b
-
-  ||| Get the value of a variable from a constructor.
-  val : Cons rn -> Var
-  val (Base ty) = ty
-  val (Pi pi res ins) = Arg {x = val pi} ins (val res)
+Show Term where
+  show Ty = "Type"
+  show (Ins ty) = "Ins (" ++ show ty ++ ")"
+  show (Id id) = "Id " ++ pack id
+  show (Pi arg desc body) = "Pi (" ++ show arg ++ ") (" ++ show desc ++ ") (" ++ show body ++ ")"
+  show (Alt prim alt) = "Alt (" ++ show prim ++ ") (" ++ show alt ++ ")"
+  show (App func arg) = "App (" ++ show func ++ ") (" ++ show arg ++ ")"
+  show (Hole) = "Hole"
+  show (Amb a b) = "Amb (" ++ show a ++ ") (" ++ show b ++ ")"
 
 data Parsed : Type where
   EOF : Parsed
   Comment : Parsed -> Parsed
-  Decl : (id : List Char) -> (type : ?a) -> Parsed -> Parsed
-  Def : (type : List Char) -> (id : List Char) -> ?b -> Parsed -> Parsed
+  Decl : (id : List Char) -> (type : Term) -> Parsed -> Parsed
+  Def : (id : List Char) -> (val : Term) -> Parsed -> Parsed
 
 Show Parsed where
   show EOF = "EOF"
-  show (Comment x) = "Comment (" ++ show x ++ ")"
-  show (Decl id x y) = ?h1
-  show (Def type id n x) = ?h2
+  show (Comment x) = "Comment, " ++ show x
+  show (Decl id x y) = "Decl " ++ pack id ++ "(" ++ show x ++ "), " ++ show y
+  show (Def id x y) = "Def " ++ pack id ++ "(" ++ show x ++ "), " ++ show y
 
 -- Lexer
 
@@ -111,25 +100,35 @@ eof _ = Nothing
 
 -- Path
 
-file : Path $ One Parsed
-file = 
+term : List (List Char, Term) -> Path $ One Term
+term ls =
+  let ident = some identChar
+        |>= \id => Id id in
+  let pi = exact "("
+        |> Pi
+        |* ident
+        |+ ?ss in
+  ?termm
+
+file : List (List Char, Term) -> Path $ One Parsed
+file ls = 
   let end = eof 
         |> Res EOF in
   let blank = some spaceChar
         |> id
-        |* file in
+        |* file ls in
   let comment = exact "--"
         |> any ^ neq '\n'
         |> Comment
-        |* file in
-  let def = some identChar
+        |* file ls in
+  let decl = some identChar
         |>= \id => any spaceChar
-        |> exact "="
+        |> exact ":"
         |> any spaceChar
         |> Decl id
-        |* ?value
-        |+ file in
-  end // blank // comment // def
+        |* term ls
+        |+= \term => file ((id, term) :: ls) in
+  end // blank // comment // decl
 
 -- Main
 
@@ -140,7 +139,7 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 2000
     | Left err => pure $ Left $ show err
-  let Just (rem, res) = solve ^ unpack str $ file
+  let Just (rem, res) = solve ^ unpack str $ file []
     | Nothing => pure $ Left "Error on parsing"
   printLn res
   pure $ Right ()

@@ -122,7 +122,7 @@ delete id map = do
 
 Keep in mind that each statement in `do` block gives
 outside world a chance to change context.
-In this example, by `map id` we shrinked the context,
+In this example, by `map id` we shrunk the context,
 so that only pair with key `id` will be deleted.
 
 By using monadic data structures,
@@ -139,7 +139,7 @@ if the inputs remain the same.
 This makes incremental compilation much more convenient. (?)
 
 By utilizing incremental compilation,
-language server and compilation can be much more faster
+language server and compilation can be much faster
 in large project, where each time only a small
 fraction of code is changed.
 

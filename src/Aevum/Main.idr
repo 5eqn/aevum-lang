@@ -35,6 +35,9 @@ Show Parsed where
   show (Decl id x y) = "Decl " ++ pack id ++ " : " ++ show x ++ ",\n" ++ show y
   show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ",\n" ++ show y
 
+Map : Type
+Map = List (List Char, Term)
+
 -- Lexer
 
 exact' : List Char -> Lexer ()
@@ -65,45 +68,37 @@ eof _ = Nothing
 
 -- Path
 
-Map : Type
-Map = List (List Char, Term)
-
-expr : Map -> Path $ One Term
-expr ls = 
-  let block = exact "("
-        |> expr ls
-        |# exact ")" in
+||| TODO case parsing
+||| TODO definition parsing
+||| TODO typecheck
+term : Map -> Path $ One Term
+term ls =
   let hole = exact "_"
         |> Res Hole in
   let ident = some identChar
         |>= \id => Res ^ Id id in
-  let unit = hole // block // ident in
+  let block = exact "(" 
+        |> term ls 
+        |# exact ")" in
+  let unit = hole // ident // block in
   let fn = unit
         |/= \term => App
         |* Res term
         |+ unit in
-  fn
-
-term : Map -> Path $ One Term
-term ls =
   let std = exact "("
         |> Pi
-        |* expr ls
+        |* term ls
         |+ exact ":"
         |> term ls
         |+ exact ")"
         |> exact "->"
         |> term ls in
-  let block = exact "(" 
-        |> term ls 
-        |# exact ")" in
-  let unit = expr ls // block in
-  let fn = Pi
+  let simp = Pi
         |* Res Hole
-        |+ unit
+        |+ fn
         |+ exact "->"
         |> term ls in
-  std // fn // unit
+  std // simp // fn
 
 file : Map -> Path $ One Parsed
 file ls = 

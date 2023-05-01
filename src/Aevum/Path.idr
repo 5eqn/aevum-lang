@@ -7,8 +7,12 @@ infixr 2 |>=
 infixr 2 |>
 infixr 2 |+=
 infixr 2 |+
+infixr 2 |/=
+infixr 2 |/
 infixr 2 |*=
 infixr 2 |*
+infixr 2 |#=
+infixr 2 |#
 infixl 1 //
 infixl 10 |*|
 infixl 10 |+|
@@ -32,12 +36,6 @@ public export
 Fun : (returnTy : Type) -> (paramsTy : Pos Type) -> Type
 Fun ty (One x) = x -> ty
 Fun ty (hd |+| tl) = hd -> Fun ty tl
-
-||| Composition of big function.
-public export
-comp : (ls : Pos Type) => (a -> b) -> Fun a ls -> Fun b ls
-comp {ls = One x} f g = f . g
-comp {ls = hd |+| tl} f g = \h => comp f (g h)
 
 ||| Serialization of product type of length 1.
 public export
@@ -81,52 +79,74 @@ public export
 
 ||| Decision path of parsing.
 ||| `Res n` initializes the result with `n`;
-||| `|>=` is the monadic composition of `Lexer` and `Path`;
-||| `|+=` is the monadic composition of `Path` and `Path`;
-||| `|*=` is the monadic composition of `Fun` and `Path`;
-||| `//` defines the alternative of a `Path`.
+||| `lexer |>= path` applies `path` if `lexer` agrees;
+||| `hd |+= tl` applies `tl` if `hd` agrees;
+||| `base |/= alt` tries to apply `alt`, if failed, applies `base`;
+||| `path |#= lexer` applies `path` if `lexer` agrees;
+||| `fun |*= path` applies `path` with `fun`;
+||| `base // alt` applies `alt` if `base` fails.
 public export
 data Path : (tyList : Pos Type) -> Type where
   Res : ty -> Path (One ty)
-  (|>=) : Lexer a -> (a -> Path ls) -> Path ls
-  (|+=) : Path (One a) -> (a -> Path ls) -> Path (a |+| ls)
-  (|*=) : (ls : Pos Type) => Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
+  (|>=) : Lexer a -> (a -> Lazy (Path ls)) -> Path ls
+  (|+=) : Path (One a) -> (a -> Lazy (Path ls)) -> Path (a |+| ls)
+  (|/=) : Path (One a) -> (a -> Lazy (Path (One a))) -> Path (One a)
+  (|#=) : Path (One a) -> (a -> Lexer _) -> Path (One a)
+  (|*=) : Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
   (//) : Path ls -> Lazy (Path ls) -> Path ls
-
-||| Mapping of path.
-public export
-(<$>) : (a -> b) -> Path (One a) -> Path (One b)
-(<$>) f (Res x) = Res (f x)
-(<$>) f (x |>= y) = x |>= (\z => f <$> y z)
-(<$>) f (x |*= y) = (comp f x) |*= (\z => ?help)
-(<$>) f (x // y) = (f <$> x) // (f <$> y)
 
 ||| `|>=` with dummy function.
 public export
-(|>) : Lexer a -> Path b -> Path b
+(|>) : Lexer a -> Lazy (Path b) -> Path b
 (|>) cons lex = cons |>= \_ => lex
 
 ||| `|+=` with dummy function.
 public export
-(|+) : Path (One a) -> Path ls -> Path $ a |+| ls
+(|+) : Path (One a) -> Lazy (Path ls) -> Path $ a |+| ls
 (|+) p q = p |+= \_ => q
+
+||| `|/=` with dummy function.
+public export
+(|/) : Path (One a) -> Lazy (Path (One a)) -> Path $ One a
+(|/) p q = p |/= \_ => q
+
+||| `|#=` with dummy function.
+public export
+(|#) : Path (One a) -> Lexer _ -> Path $ One a
+(|#) p q = p |#= \_ => q
 
 ||| `|*=` with dummy function.
 public export
-(|*) : (ls : Pos Type) => Fun ty ls -> Path ls -> Path $ One ty
+(|*) : Fun ty ls -> Path ls -> Path $ One ty
 (|*) p q = p |*= \_ => q
 
-||| Solve a `Path` with given string.
+||| Trim starting spaces.
+public export
+trim : List Char -> List Char
+trim [] = []
+trim (hd :: tl) = if spaceChar hd then trim tl else (hd :: tl)
+
+|||Solve a `Path` with given string.
 ||| Returns the result if succeeded.
 public export
 solve : List Char -> Path ls -> Maybe (List Char, Prod ls)
 solve str (Res ctx) = Just (str, Single ctx)
-solve a (cons |>= fn) = case cons a of
+solve a (cons |>= fn) = case cons (trim a) of
   Just (b, x) => solve b (fn x)
   Nothing => Nothing
 solve a (p |+= q) = case solve a p of
   Just (b, (Single x)) => case solve b (q x) of
     Just (c, y) => Just (c, stack x y)
+    Nothing => Nothing
+  Nothing => Nothing
+solve a (p |/= q) = case solve a p of
+  Just (b, (Single x)) => case solve b (q x) of
+    Just pair => Just pair
+    Nothing => Just (b, (Single x))
+  Nothing => Nothing
+solve a (p |#= q) = case solve a p of
+  Just (b, (Single x)) => case (q x) (trim b) of
+    Just (c, _) => Just (c, Single x)
     Nothing => Nothing
   Nothing => Nothing
 solve a (p |*= q) = case solve a (q p) of

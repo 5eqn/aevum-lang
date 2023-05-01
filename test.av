@@ -1,8 +1,1 @@
--- numeric
-xxy = 554
-
--- string
-yyz = "test"
-
--- reference
-test = xxy
+test : (ty : Type) -> (ano : ty) -> Fun ty ano

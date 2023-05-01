@@ -7,56 +7,21 @@ import Aevum.Util
 
 -- Parsed Datatype
 
-{-
-```
-data Test : Type where
-  X : Test
-  Y : Test -> Test
-
-cased : Test -> Type
-cased = \n => case n of
-  X => Type
-  Y _ => Test
-
-test : (n : Test) -> cased n
-test = \n => case n of
-  X => Test
-  Y _ => X
-```
-
-Only put these into map upon correct declaration:
-
-<Type> | Ty
-<Test> | Ins (Id "Type")
-<X> | Ins (Id "Test")
-<Y> | Pi (Id "") (Ins (Id "Test")) (Ins (Id "Test"))
-<cased> | Pi (Id "") (Ins (Id "Test")) (Ins (Id "Type"))
-<cased> = Pi (Id "n") Hole (App (Alt (Pi (Id "X") Hole (Id "Type")) (Pi (App (Id "Y") (Id "_")) Hole (Id "Test"))) (Id "n"))
-
-1. When constructing `App`, check the types of involved elements.
-   Reader function is called with a `Term` argument to be unified with generated result.
-2. In declaration-definition structure, unify both types.
--}
-
 data Term : Type where
-  Ty : Term
-  Ins : (type : Term) -> Term
   Id : (id : List Char) -> Term
-  Pi : (arg : Term) -> (desc : Term) -> (body : Term) -> Term
+  Pi : (arg : Term) -> (type : Term) -> (body : Term) -> Term
   Alt : (prim : Term) -> (alt : Term) -> Term
   App : (func : Term) -> (arg : Term) -> Term
   Hole : Term
   Amb : Term -> Term -> Term
 
 Show Term where
-  show Ty = "Type"
-  show (Ins ty) = "Ins (" ++ show ty ++ ")"
-  show (Id id) = "Id " ++ pack id
-  show (Pi arg desc body) = "Pi (" ++ show arg ++ ") (" ++ show desc ++ ") (" ++ show body ++ ")"
-  show (Alt prim alt) = "Alt (" ++ show prim ++ ") (" ++ show alt ++ ")"
-  show (App func arg) = "App (" ++ show func ++ ") (" ++ show arg ++ ")"
-  show (Hole) = "Hole"
-  show (Amb a b) = "Amb (" ++ show a ++ ") (" ++ show b ++ ")"
+  show (Id id) = pack id
+  show (Pi arg type body) = "(" ++ show arg ++ " : " ++ show type ++ ") -> " ++ show body
+  show (Alt prim alt) = "[" ++ show prim ++ " / " ++ show alt ++ "]"
+  show (App func arg) = "(" ++ show func ++ " " ++ show arg ++ ")"
+  show (Hole) = "<?>"
+  show (Amb a b) = "{" ++ show a ++ " ? " ++ show b ++ "}"
 
 data Parsed : Type where
   EOF : Parsed
@@ -67,8 +32,8 @@ data Parsed : Type where
 Show Parsed where
   show EOF = "EOF"
   show (Comment x) = "Comment, " ++ show x
-  show (Decl id x y) = "Decl " ++ pack id ++ "(" ++ show x ++ "), " ++ show y
-  show (Def id x y) = "Def " ++ pack id ++ "(" ++ show x ++ "), " ++ show y
+  show (Decl id x y) = "Decl " ++ pack id ++ " : " ++ show x ++ ", " ++ show y
+  show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ", " ++ show y
 
 -- Lexer
 
@@ -100,35 +65,53 @@ eof _ = Nothing
 
 -- Path
 
-term : List (List Char, Term) -> Path $ One Term
-term ls =
+Map : Type
+Map = List (List Char, Term)
+
+depth : Nat
+depth = 5
+
+expr : Nat -> Map -> Path $ One Term
+expr rec ls = 
+  let block = exact "("
+        |> expr rec ls
+        |# exact ")" in
   let ident = some identChar
-        |>= \id => Id id in
+        |>= \id => Res ^ Id id in
+  let unit = block // ident in
+  let S n = rec
+        | Z => unit in
+  let fn = App
+        |* expr n ls
+        |+ unit in
+  fn // expr n ls
+
+term : Map -> Path $ One Term
+term ls =
   let pi = exact "("
         |> Pi
-        |* ident
-        |+ ?ss in
-  ?termm
+        |* expr depth ls
+        |+ exact ":"
+        |> expr depth ls
+        |+ exact ")"
+        |> exact "->"
+        |> term ls in
+  pi // expr depth ls
 
-file : List (List Char, Term) -> Path $ One Parsed
+file : Map -> Path $ One Parsed
 file ls = 
   let end = eof 
         |> Res EOF in
-  let blank = some spaceChar
-        |> id
-        |* file ls in
   let comment = exact "--"
         |> any ^ neq '\n'
         |> Comment
         |* file ls in
   let decl = some identChar
-        |>= \id => any spaceChar
-        |> exact ":"
-        |> any spaceChar
+        |>= \id => exact ":"
         |> Decl id
         |* term ls
         |+= \term => file ((id, term) :: ls) in
-  end // blank // comment // decl
+  end // comment // decl
 
 -- Main
 

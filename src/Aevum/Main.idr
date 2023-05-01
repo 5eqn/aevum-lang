@@ -18,10 +18,10 @@ data Term : Type where
 Show Term where
   show (Id id) = pack id
   show (Pi arg type body) = "(" ++ show arg ++ " : " ++ show type ++ ") -> " ++ show body
-  show (Alt prim alt) = "[" ++ show prim ++ " / " ++ show alt ++ "]"
+  show (Alt prim alt) = "[" ++ show prim ++ " | " ++ show alt ++ "]"
   show (App func arg) = "(" ++ show func ++ " " ++ show arg ++ ")"
-  show (Hole) = "<?>"
-  show (Amb a b) = "{" ++ show a ++ " ? " ++ show b ++ "}"
+  show (Hole) = "?"
+  show (Amb a b) = "[" ++ show a ++ " / " ++ show b ++ "]"
 
 data Parsed : Type where
   EOF : Parsed
@@ -31,9 +31,9 @@ data Parsed : Type where
 
 Show Parsed where
   show EOF = "EOF"
-  show (Comment x) = "Comment, " ++ show x
-  show (Decl id x y) = "Decl " ++ pack id ++ " : " ++ show x ++ ", " ++ show y
-  show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ", " ++ show y
+  show (Comment x) = "Comment,\n" ++ show x
+  show (Decl id x y) = "Decl " ++ pack id ++ " : " ++ show x ++ ",\n" ++ show y
+  show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ",\n" ++ show y
 
 -- Lexer
 
@@ -68,40 +68,50 @@ eof _ = Nothing
 Map : Type
 Map = List (List Char, Term)
 
-depth : Nat
-depth = 5
-
-expr : Nat -> Map -> Path $ One Term
-expr rec ls = 
+expr : Map -> Path $ One Term
+expr ls = 
   let block = exact "("
-        |> expr rec ls
+        |> expr ls
         |# exact ")" in
+  let hole = exact "_"
+        |> Res Hole in
   let ident = some identChar
         |>= \id => Res ^ Id id in
-  let unit = block // ident in
-  let S n = rec
-        | Z => unit in
-  let fn = App
-        |* expr n ls
+  let unit = hole // block // ident in
+  let fn = unit
+        |/= \term => App
+        |* Res term
         |+ unit in
-  fn // expr n ls
+  fn
 
 term : Map -> Path $ One Term
 term ls =
-  let pi = exact "("
+  let std = exact "("
         |> Pi
-        |* expr depth ls
+        |* expr ls
         |+ exact ":"
-        |> expr depth ls
+        |> term ls
         |+ exact ")"
         |> exact "->"
         |> term ls in
-  pi // expr depth ls
+  let block = exact "(" 
+        |> term ls 
+        |# exact ")" in
+  let unit = expr ls // block in
+  let fn = Pi
+        |* Res Hole
+        |+ unit
+        |+ exact "->"
+        |> term ls in
+  std // fn // unit
 
 file : Map -> Path $ One Parsed
 file ls = 
   let end = eof 
         |> Res EOF in
+  let endl = exact "\n"
+        |> id
+        |* file ls in
   let comment = exact "--"
         |> any ^ neq '\n'
         |> Comment
@@ -111,7 +121,7 @@ file ls =
         |> Decl id
         |* term ls
         |+= \term => file ((id, term) :: ls) in
-  end // comment // decl
+  end // endl // comment // decl
 
 -- Main
 

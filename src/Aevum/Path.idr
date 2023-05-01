@@ -81,7 +81,7 @@ public export
 ||| `Res n` initializes the result with `n`;
 ||| `lexer |>= path` applies `path` if `lexer` agrees;
 ||| `hd |+= tl` applies `tl` if `hd` agrees;
-||| `base |/= alt` tries to apply `alt`, if failed, applies `base`;
+||| `base |/= loop` applies `loop` with initial value `base` until it fails;
 ||| `path |#= lexer` applies `path` if `lexer` agrees;
 ||| `fun |*= path` applies `path` with `fun`;
 ||| `base // alt` applies `alt` if `base` fails.
@@ -141,7 +141,7 @@ solve a (p |+= q) = case solve a p of
   Nothing => Nothing
 solve a (p |/= q) = case solve a p of
   Just (b, (Single x)) => case solve b (q x) of
-    Just pair => Just pair
+    Just (c, (Single y)) => solve c (Res y |/= q)
     Nothing => Just (b, (Single x))
   Nothing => Nothing
 solve a (p |#= q) = case solve a p of

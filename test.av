@@ -1,1 +1,3 @@
-test : (ty : Type) -> (ano : ty) -> Fun ty ano
+a : Nat
+b : Nat -> Nat
+c : (ty : ((a : _) -> B)) -> (ano : ty) -> Fun ty ano

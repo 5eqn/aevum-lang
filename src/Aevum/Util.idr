@@ -34,7 +34,7 @@ identChar c = (c >= 'a' && c <= 'z') ||
 ||| Is `c` a whitespace character?
 public export
 spaceChar : Char -> Bool
-spaceChar c = c == ' ' || c == '\t' || c == '\r' || c == '\n'
+spaceChar c = c == ' '
 
 ||| Is `c` a number?
 public export

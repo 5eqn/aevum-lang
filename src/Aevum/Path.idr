@@ -1,21 +1,21 @@
 module Aevum.Path
 
-import Aevum.Lexing
 import Aevum.Util
 
 infixr 2 |>=
 infixr 2 |>
 infixr 2 |+=
 infixr 2 |+
-infixr 2 |/=
-infixr 2 |/
+infixr 2 |^=
+infixr 2 |^
 infixr 2 |*=
 infixr 2 |*
-infixr 2 |#=
-infixr 2 |#
-infixl 1 //
-infixl 10 |*|
-infixl 10 |+|
+infixr 2 |<=
+infixr 2 |<
+infixr 2 |/=
+infixr 1 //
+infixr 10 |*|
+infixr 10 |+|
 
 -- Prod and Fun
 
@@ -78,20 +78,24 @@ public export
 -- Path
 
 ||| Decision path of parsing.
+||| Terminal:
 ||| `Res n` initializes the result with `n`;
+||| Functional:
+||| `fun |*= path` applies `path` to `fun`; TODO remove this
+||| Conditional:
 ||| `lexer |>= path` applies `path` if `lexer` agrees;
+||| `path |<= lexer` applies `path` if `lexer` agrees;
 ||| `hd |+= tl` applies `tl` if `hd` agrees;
-||| `base |/= loop` applies `loop` with initial value `base` until it fails;
-||| `path |#= lexer` applies `path` if `lexer` agrees;
-||| `fun |*= path` applies `path` with `fun`;
+||| Selective:
+||| `base |^= loop` sequences the most `loop`s possible after `base`;
 ||| `base // alt` applies `alt` if `base` fails.
 public export
 data Path : (tyList : Pos Type) -> Type where
   Res : ty -> Path (One ty)
   (|>=) : Lexer a -> (a -> Lazy (Path ls)) -> Path ls
   (|+=) : Path (One a) -> (a -> Lazy (Path ls)) -> Path (a |+| ls)
-  (|/=) : Path (One a) -> (a -> Lazy (Path (One a))) -> Path (One a)
-  (|#=) : Path (One a) -> (a -> Lexer _) -> Path (One a)
+  (|^=) : Path (One a) -> (a -> Lazy (Path (One a))) -> Path (One a)
+  (|<=) : Path (One a) -> (a -> Lexer _) -> Path (One a)
   (|*=) : Fun ty ls -> (Fun ty ls -> Path ls) -> Path (One ty)
   (//) : Path ls -> Lazy (Path ls) -> Path ls
 
@@ -105,20 +109,26 @@ public export
 (|+) : Path (One a) -> Lazy (Path ls) -> Path $ a |+| ls
 (|+) p q = p |+= \_ => q
 
-||| `|/=` with dummy function.
+||| `|^=` with dummy function.
 public export
-(|/) : Path (One a) -> Lazy (Path (One a)) -> Path $ One a
-(|/) p q = p |/= \_ => q
+(|^) : Path (One a) -> Lazy (Path (One a)) -> Path $ One a
+(|^) p q = p |^= \_ => q
 
-||| `|#=` with dummy function.
+||| `|<=` with dummy function.
 public export
-(|#) : Path (One a) -> Lexer _ -> Path $ One a
-(|#) p q = p |#= \_ => q
+(|<) : Path (One a) -> Lexer _ -> Path $ One a
+(|<) p q = p |<= \_ => q
 
 ||| `|*=` with dummy function.
 public export
 (|*) : Fun ty ls -> Path ls -> Path $ One ty
 (|*) p q = p |*= \_ => q
+
+||| `(ls, init) |/= fn` traverses `ls` and mutates `init` with `fn`.
+public export
+(|/=) : (Pos a, Path ls) -> (a -> Path ls -> Path ls) -> Path ls
+(|/=) (One x, p) f = f x p
+(|/=) (hd |+| tl, p) f = let q = f hd p in (tl, q) |/= f
 
 ||| Trim starting spaces.
 public export
@@ -139,12 +149,12 @@ solve a (p |+= q) = case solve a p of
     Just (c, y) => Just (c, stack x y)
     Nothing => Nothing
   Nothing => Nothing
-solve a (p |/= q) = case solve a p of
+solve a (p |^= q) = case solve a p of
   Just (b, (Single x)) => case solve b (q x) of
-    Just (c, (Single y)) => solve c (Res y |/= q)
+    Just (c, (Single y)) => solve c (Res y |^= q)
     Nothing => Just (b, (Single x))
   Nothing => Nothing
-solve a (p |#= q) = case solve a p of
+solve a (p |<= q) = case solve a p of
   Just (b, (Single x)) => case (q x) (trim b) of
     Just (c, _) => Just (c, Single x)
     Nothing => Nothing

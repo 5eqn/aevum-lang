@@ -66,7 +66,32 @@ eof : Lexer ()
 eof [] = Just ([], ())
 eof _ = Nothing
 
+-- Operator
+
+data Binding = L | R
+Eq Binding where
+  L == L = True
+  R == R = True
+  _ == _ = False
+
+order : Pos (String, Binding)
+order = ("*", L) 
+      |+| ("+", L)
+      |+| One ("=", R)
+
 -- Path
+
+oprt : (String, Binding) -> Path ^ One Term -> Path ^ One Term
+oprt (op, bd) pt =
+  case bd of
+    R => pt 
+        |^= \tm => exact op
+        |> App (App (Id $ unpack op) tm)
+        |* oprt (op, bd) pt
+    L => pt 
+        |^= \tm => exact op
+        |> App (App (Id $ unpack op) tm)
+        |* pt
 
 ||| TODO case parsing
 ||| TODO definition parsing
@@ -79,12 +104,14 @@ term ls =
         |>= \id => Res ^ Id id in
   let block = exact "(" 
         |> term ls 
-        |# exact ")" in
+        |< exact ")" in
   let unit = hole // ident // block in
   let fn = unit
-        |/= \term => App
-        |* Res term
+        |^= \tm => App
+        |* Res tm
         |+ unit in
+  let comp = (order, fn)
+        |/= oprt in
   let std = exact "("
         |> Pi
         |* term ls
@@ -93,12 +120,13 @@ term ls =
         |+ exact ")"
         |> exact "->"
         |> term ls in
-  let simp = Pi
+  let simp = comp
+        |^= \tm => exact "->"
+        |> Pi
         |* Res Hole
-        |+ fn
-        |+ exact "->"
-        |> term ls in
-  std // simp // fn
+        |+ Res tm
+        |+ term ls in
+  std // simp
 
 file : Map -> Path $ One Parsed
 file ls = 

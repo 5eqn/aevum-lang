@@ -1,5 +1,6 @@
 module Aevum.Main
 
+import System
 import System.File.Handle
 import System.File.ReadWrite
 import Aevum.Path
@@ -138,14 +139,48 @@ file ls =
         |+= \v => Res ^ Decl id u v in
   end // endl // comment // decl
 
+data Counted : Type where
+  End : Counted
+  Line : Counted -> Counted
+
+counter : Path Counted
+counter =
+  let end = eof
+        |> Res End in
+  let endl = exact "\n"
+        |> counter in
+  let comment = exact "--"
+        |> any ^ neq '\n'
+        |> counter in
+  let block = exact "|||"
+        |> any ^ neq '\n'
+        |> counter in
+  let other = any ^ neq '\n'
+        |> counter 
+        |+= \u => Res ^ Line u in
+  end // endl // comment // block // other
+
+depth : Counted -> Nat
+depth End = 0
+depth (Line n) = S (depth n)
+
 -- Main
 
 onError : FileError -> IO String
 onError err = pure $ show err
 
+onOpen' : File -> IO $ Either String ()
+onOpen' f = do
+  Right str <- fGetChars f 1048576
+    | Left err => pure $ Left $ show err
+  let Just (rem, res) = solve ^ unpack str $ counter
+    | Nothing => pure $ Left "Error on parsing"
+  printLn $ depth res
+  pure $ Right ()
+
 onOpen : File -> IO $ Either String ()
 onOpen f = do
-  Right str <- fGetChars f 2000
+  Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
   let Just (rem, res) = solve ^ unpack str $ file []
     | Nothing => pure $ Left "Error on parsing"
@@ -154,7 +189,9 @@ onOpen f = do
 
 main : IO ()
 main = do
-  res <- withFile "test.av" Read onError onOpen
+  (_ :: (opt :: _)) <- getArgs
+    | _ => printLn "No file specified"
+  res <- withFile opt Read onError onOpen'
   case res of
     Left err => printLn err
     Right () => pure ()

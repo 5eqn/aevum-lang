@@ -69,10 +69,6 @@ eof _ = Nothing
 -- Operator
 
 data Binding = L | R
-Eq Binding where
-  L == L = True
-  R == R = True
-  _ == _ = False
 
 order : Pos (String, Binding)
 order = ("*", L) 
@@ -81,22 +77,22 @@ order = ("*", L)
 
 -- Path
 
-oprt : (String, Binding) -> Path ^ One Term -> Path ^ One Term
-oprt (op, bd) pt =
+oprt : (String, Binding) -> Path Term -> Path Term
+oprt (op, bd) path =
   case bd of
-    R => pt 
-        |^= \tm => exact op
-        |> App (App (Id $ unpack op) tm)
-        |* oprt (op, bd) pt
-    L => pt 
-        |^= \tm => exact op
-        |> App (App (Id $ unpack op) tm)
-        |* pt
+    R => path 
+        |*= \u => exact op
+        |> oprt (op, bd) path
+        |+= \v => Res $ App (App (Id $ unpack op) u) v
+    L => path 
+        |*= \u => exact op
+        |> path
+        |+= \v => Res $ App (App (Id $ unpack op) u) v
 
 ||| TODO case parsing
 ||| TODO definition parsing
 ||| TODO typecheck
-term : Map -> Path $ One Term
+term : Map -> Path Term
 term ls =
   let hole = exact "_"
         |> Res Hole in
@@ -107,43 +103,39 @@ term ls =
         |< exact ")" in
   let unit = hole // ident // block in
   let fn = unit
-        |^= \tm => App
-        |* Res tm
-        |+ unit in
+        |*= \u => unit
+        |+= \v => Res ^ App u v in
   let comp = (order, fn)
         |/= oprt in
   let std = exact "("
-        |> Pi
-        |* term ls
-        |+ exact ":"
         |> term ls
-        |+ exact ")"
+        |+= \u => exact ":"
+        |> term ls
+        |+= \v => exact ")"
         |> exact "->"
-        |> term ls in
+        |> term ls 
+        |+= \w => Res ^ Pi u v w in
   let simp = comp
-        |^= \tm => exact "->"
-        |> Pi
-        |* Res Hole
-        |+ Res tm
-        |+ term ls in
+        |*= \u => exact "->"
+        |> term ls 
+        |+= \v => Res ^ Pi Hole u v in
   std // simp
 
-file : Map -> Path $ One Parsed
+file : Map -> Path Parsed
 file ls = 
   let end = eof 
         |> Res EOF in
   let endl = exact "\n"
-        |> id
-        |* file ls in
+        |> file ls in
   let comment = exact "--"
         |> any ^ neq '\n'
-        |> Comment
-        |* file ls in
+        |> file ls 
+        |+= \u => Res ^ Comment u in
   let decl = some identChar
         |>= \id => exact ":"
-        |> Decl id
-        |* term ls
-        |+= \term => file ((id, term) :: ls) in
+        |> term ls
+        |+= \u => file ((id, u) :: ls) 
+        |+= \v => Res ^ Decl id u v in
   end // endl // comment // decl
 
 -- Main

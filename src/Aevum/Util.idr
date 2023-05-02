@@ -1,6 +1,13 @@
 module Aevum.Util
 
 infixr 4 ^
+infixr 10 |+|
+
+||| Non-empty list.
+public export
+data Pos : (listTy : Type) -> Type where
+  One : x -> Pos x
+  (|+|) : x -> Pos x -> Pos x
 
 ||| Returns true if the first argument is a prefix of the second.
 public export

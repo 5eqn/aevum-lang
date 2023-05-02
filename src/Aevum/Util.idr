@@ -47,3 +47,9 @@ spaceChar c = c == ' '
 public export
 numChar : Char -> Bool
 numChar c = c >= '0' && c <= '9'
+
+||| Trim starting spaces.
+public export
+trim : List Char -> List Char
+trim [] = []
+trim (hd :: tl) = if spaceChar hd then trim tl else (hd :: tl)

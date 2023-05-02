@@ -81,13 +81,7 @@ public export
 (|/=) (One x, p) f = f x p
 (|/=) (hd |+| tl, p) f = let q = f hd p in (tl, q) |/= f
 
-||| Trim starting spaces.
-public export
-trim : List Char -> List Char
-trim [] = []
-trim (hd :: tl) = if spaceChar hd then trim tl else (hd :: tl)
-
-|||Solve a `Path` with given string.
+||| Solve a `Path` with given string.
 ||| Returns the result if succeeded.
 public export
 solve : List Char -> Path a -> Maybe (List Char, a)

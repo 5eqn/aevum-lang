@@ -88,7 +88,6 @@ oprt (op, bd) path =
         |> path
         |+= \v => Res $ App (App (Id $ unpack op) u) v
 
-||| TODO definition parsing
 ||| TODO typecheck
 term : Map -> Path Term
 term ls =
@@ -99,9 +98,9 @@ term ls =
   let block = exact "(" 
         |> term ls 
         |< exact ")" in
-  let unit = hole // ident // block in  -- eg. `(anything)` and `var`
-  let fn = unit
-        |*= \u => unit
+  let atom = hole // ident // block in  -- eg. `(R -> S)` and `var`
+  let fn = atom
+        |*= \u => atom
         |+= \v => Res ^ App u v in
   let comp = (order, fn)                -- eg. `f x + y * z`
         |/= oprt in
@@ -113,13 +112,13 @@ term ls =
   let clauses = clause
         |*= \u => clause
         |+= \v => Res ^ Alt u v in
-  let cased = exact "{"                 -- eg. `{anything}`
+  let cased = exact "{"
         |> term ls
         |+= \u => clauses
         |+= \v => Res ^ App v u 
         |< exact "}" in
   let val = cased // comp in
-  let std = exact "("                   -- standard form of Pi Type
+  let pi = exact "("                   -- eg. `(a : Nat) -> Type`
         |> term ls
         |+= \u => exact ":"
         |> term ls
@@ -127,11 +126,11 @@ term ls =
         |> exact "->"
         |> term ls 
         |+= \w => Res ^ Pi u v w in
-  let simp = val                        -- simplified form, eg. `Nat -> Type`
+  let pi' = val                        -- eg. `Nat -> Type`
         |*= \u => exact "->"
         |> term ls 
         |+= \v => Res ^ Pi Hole u v in
-  std // simp
+  pi // pi'
 
 file : Map -> Path Parsed
 file ls = 
@@ -149,7 +148,13 @@ file ls =
         |+= \u => exact ";"
         |> file ((id, u) :: ls) 
         |+= \v => Res ^ Decl id u v in
-  end // endl // comment // decl
+  let def = some identChar
+        |>= \id => exact "="
+        |> term ls
+        |+= \u => exact ";"
+        |> file ((id, u) :: ls) 
+        |+= \v => Res ^ Decl id u v in
+  end // endl // comment // decl // def
 
 -- Main
 

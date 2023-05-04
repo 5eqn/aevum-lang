@@ -1,4 +1,4 @@
 z : Nat;
-a : A + B * C + r = s = t + Z;
+a = A + B * C + r = s = t + Z;
 b : (n : Nat) -> { n | Z => String | S m => Vec m Nat };
 c : (ty : (a : _) -> B) -> (ano : ty) -> _ -> Fun ty ano;

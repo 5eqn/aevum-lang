@@ -14,11 +14,9 @@ data Term : Type where
   Alt : (prim : Term) -> (alt : Term) -> Term
   App : (func : Term) -> (arg : Term) -> Term
   Hole : Term
-  Amb : Term -> Term -> Term
 
 data Parsed : Type where
   EOF : Parsed
-  Comment : Parsed -> Parsed
   Decl : (id : List Char) -> (type : Term) -> Parsed -> Parsed
   Def : (id : List Char) -> (val : Term) -> Parsed -> Parsed
 
@@ -27,17 +25,35 @@ Show Term where
   show (Pi arg type body) = "(" ++ show arg ++ " : " ++ show type ++ ") -> " ++ show body
   show (Alt prim alt) = "[" ++ show prim ++ " | " ++ show alt ++ "]"
   show (App func arg) = "(" ++ show func ++ " " ++ show arg ++ ")"
-  show (Hole) = "?"
-  show (Amb a b) = "[" ++ show a ++ " / " ++ show b ++ "]"
+  show Hole = "?"
 
 Show Parsed where
   show EOF = "EOF"
-  show (Comment x) = "Comment,\n" ++ show x
   show (Decl id x y) = "Decl " ++ pack id ++ " : " ++ show x ++ ",\n" ++ show y
   show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ",\n" ++ show y
 
-Map : Type
 Map = List (List Char, Term)
+find : Map -> List Char -> Maybe Term
+find [] str = Nothing
+find ((k, v) :: tl) str = if k == str then Just v else find tl str
+
+typeof : Map -> Term -> Maybe Term
+typeof ls (Id a) = find ls a
+typeof ls (Pi arg type body) = Just $ Id $ unpack "Type"
+typeof ls Hole = Just Hole
+typeof ls (Alt prim alt) = typeof ls prim
+typeof ls (App (Pi arg type body) arg') = typeof ls body
+typeof ls _ = Nothing
+
+unify : Map -> Term -> Term -> Maybe (Map, Term)
+unify ls (Id a) (Id b) = if a == b then Just (ls, Id a) else Nothing
+unify ls (App func arg) (App func' arg') = case unify ls func func' of
+  Just (ls', func'') => case unify ls' arg arg' of
+    Just (ls'', arg'') => Just (ls'', App func'' arg'')
+    Nothing => Nothing
+  Nothing => Nothing
+unify ls Hole (Id a) = Just (ls, Id a)
+unify ls _ _ = Nothing
 
 -- Lexer
 
@@ -75,7 +91,6 @@ order : Pos (String, Binding)
 order = ("*", L) 
       |+| ("+", L)
       |+| One ("=", R)
-
 oprt : (String, Binding) -> Path Term -> Path Term
 oprt (op, bd) path =
   case bd of
@@ -88,7 +103,6 @@ oprt (op, bd) path =
         |> path
         |+= \v => Res $ App (App (Id $ unpack op) u) v
 
-||| TODO typecheck
 term : Map -> Path Term
 term ls =
   let hole = exact "_"
@@ -132,6 +146,7 @@ term ls =
         |+= \v => Res ^ Pi Hole u v in
   pi // pi'
 
+
 file : Map -> Path Parsed
 file ls = 
   let end = eof 
@@ -140,8 +155,7 @@ file ls =
         |> file ls in
   let comment = exact "--"
         |> any ^ neq '\n'
-        |> file ls 
-        |+= \u => Res ^ Comment u in
+        |> file ls in
   let decl = some identChar
         |>= \id => exact ":"
         |> term ls
@@ -153,7 +167,7 @@ file ls =
         |> term ls
         |+= \u => exact ";"
         |> file ((id, u) :: ls) 
-        |+= \v => Res ^ Decl id u v in
+        |+= \v => Res ^ Def id u v in
   end // endl // comment // decl // def
 
 -- Main

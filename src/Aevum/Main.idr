@@ -8,67 +8,119 @@ import Aevum.Util
 
 -- Parsed Datatype
 
-||| Function level is checked by type, but full typecheck requires `typeOf` function
-||| Once constructed, must be correct
-data Fn : List Nat -> Type where
-  Lit : List Char -> Fn [1]
-  Pi : List Char -> Fn [n] -> Fn [m] -> Fn [S m]
-  Lam : List Char -> Fn [n] -> Fn ls -> Fn (n :: ls)
-  App : Fn (length args :: ls) -> Fn args -> Fn ls
-  Case : Fn ls -> List (Fn ls, Fn ls') -> Fn ls'
+Name : Type
+Name = List Char
 
-Decls : Type
-Decls = List (List Char, List Char)
+data Pat : Type where
+  Cons : Name -> Pat
+  Arg : Name -> Pat -> Pat
 
-Defs : Type
-Defs = List (List Char, (ls : List Nat ** Fn ls))
+data Fn : Type where
+  Lit : Name -> Fn
+  Pi : Name -> Fn -> Fn -> Fn
+  Lam : Name -> Fn -> Fn -> Fn
+  App : Fn -> Fn -> Fn
+  Case : Fn -> List (Pat, Fn) -> Fn
 
-findDef : Defs -> List Char -> Maybe (ls : List Nat ** Fn ls)
-findDef [] str = Nothing
-findDef ((str, (ls ** fn)) :: tl) str' = 
-  if str == str' then Just (ls ** fn) else findDef tl str'
+record KV where
+  constructor MkKV
+  key : Name
+  val : Fn
 
-findDecl : Decls -> List Char -> Maybe (List Char)
-findDecl [] str = Nothing
-findDecl ((str, name) :: tl) str' = 
-  if str == str' then Just name else findDecl tl str'
+record Info where
+  constructor MkInfo
+  decs : List KV
+  defs : List KV
 
-incrType : List Char -> Maybe (List Char)
-incrType ('#' :: ls) = Just ('#' :: '#' :: ls)
-incrType _ = Nothing
+find : Name -> List KV -> Maybe Fn
+find name [] = Nothing
+find name (a :: b) = if key a == name then Just a.val else find name b
 
-unify : Decls -> Defs -> Fn ls -> Fn ls -> Maybe (Decls, Defs)
-unify = ?xx
+appendDecs : KV -> Info -> Info
+appendDecs kv info = MkInfo (kv :: info.decs) info.defs
 
-typeof : Decls -> Defs -> Fn ls -> Maybe (Fn [length ls])
-typeof decl def (Lit str) =
-  let Nothing = incrType str
-    | Just name => Just (Lit name) in
-  let Nothing = findDecl decl str
-    | Just name => Just (Lit name) in
-  Nothing
-typeof decl def (Pi _ _ _) = Just (Lit (unpack "#"))
-typeof decl def (Lam id ty body) =
-  let Just tm = typeof decl def body
-    | _ => Nothing in
-  Just (Pi id ty tm)
-typeof decl def (App fn arg) =
-  let Just (Pi id ty tm) = typeof decl def fn  -- TODO append ctx to decl and def (can't get argument name for now)
-    | _ => Nothing in
-  Just tm
-typeof decl def (Case arg []) = Nothing
-typeof decl def (Case arg ((pat, res) :: tl)) =
-  let Just (dc, df) = unify decl def pat arg
-    | _ => Nothing in
-  let Just ty = typeof (decl ++ dc) (def ++ df) res
-    | _ => Nothing in
-  let (u :: v) = tl
-    | _ => Just ty in
-  let Just ty' = typeof decl def (Case arg tl)
-    | _ => Nothing in
-  let Nothing = unify decl def ty ty'
-    | _ => Just ty in
-  Nothing
+appendDefs : KV -> Info -> Info
+appendDefs kv info = MkInfo info.decs (kv :: info.defs)
+
+match : Info -> List (Pat, Fn) -> Fn -> Maybe (Info, Fn)
+match info ls arg = foldl tryMatch Nothing ls where     -- fold over all paths
+  tryMatch : Maybe (Info, Fn) -> (Pat, Fn) -> Maybe (Info, Fn)
+  tryMatch Nothing (pat, fn) =
+    let Just info' = bindPat pat arg                    -- check and bind argument
+      | Nothing => Nothing in
+    Just (info', fn) where                              -- apply path if succeeded
+    bindPat : Pat -> Fn -> Maybe Info
+    bindPat (Cons a) (Lit b) =
+      if a == b then Just info else Nothing
+    bindPat (Arg a x) (App f (Lit b)) =
+      let Just info' = bindPat x f
+        | Nothing => Nothing in
+      Just $ appendDefs (MkKV a (Lit b)) info'
+    bindPat _ _ = Nothing
+  tryMatch res _ = res
+
+equal : Info -> Fn -> Fn -> Bool
+equal info (Lit n) (Lit m) =
+  let Nothing = find n info.defs                        -- left simped
+    | Just fn => equal info fn (Lit m) in
+  let Nothing = find m info.defs                        -- right simped
+    | Just fn => equal info (Lit n) fn in
+  n == m
+equal info (Pi n a x) (Pi m b y) =
+  let True = equal info a b                             -- same argument type
+    | False => False in
+  equal (appendDefs (MkKV n (Lit m)) info) x y          -- same body when argument replaced
+equal info (Lam n a x) (Lam m b y) =
+  let True = equal info a b                             -- same argument type
+    | False => False in
+  equal (appendDefs (MkKV n (Lit m)) info) x y          -- same body when argument replaced
+equal info (App (Lam n a x) arg) u = 
+  equal (appendDefs (MkKV n arg) info) x u              -- same when argument replaced
+equal info u (App fn arg) = equal info (App fn arg) u   -- symmetry
+equal info (Case arg ls) u =
+  let Nothing = match info ls arg                       -- case choice may commit
+    | Just (info', body) => equal info' body u in
+  let Case arg' ls' = u                                 -- if didn't commit, rhs must be cased
+    | _ => False in
+  let True = equal info arg arg'                        -- argument must equal 
+    | False => False in
+  caseEq info ls ls' where                              -- all case paths equal
+  caseEq : Info -> List (Pat, Fn) -> List (Pat, Fn) -> Bool
+  caseEq info lhs rhs = foldl contains True lhs where
+    contains : Bool -> (Pat, Fn) -> Bool                -- rhs contains all lhs paths
+    contains orig (pat, fn) = foldl same False rhs where
+      same : Bool -> (Pat, Fn) -> Bool                  -- one of rhs equals each lhs path
+      same orig (pat', fn') =
+        let Just info' = bindPat pat pat'               -- check and replace argument
+          | Nothing => orig in
+        equal info' fn fn' where                        -- path with same pattern determines if each lhs path is contained
+        bindPat : Pat -> Pat -> Maybe Info
+        bindPat (Cons a) (Cons b) = 
+          if a == b then Just info else Nothing
+        bindPat (Arg a x) (Arg b y) =
+          let Just info' = bindPat x y
+            | Nothing => Nothing in
+          Just $ appendDefs (MkKV a (Lit b)) info'
+        bindPat _ _ = Nothing
+equal info u (Case arg ls) = equal info (Case arg ls) u -- symmetry
+equal info _ _ = False
+
+-- handle lambda and case here, bind dec and def by changing arg `info`. `unify` is not needed in case split.
+check : Info -> Fn -> Fn -> Bool
+check info (Lit name) ty =
+  let Just fn = find name info.decs
+    | Nothing => False in
+  equal info fn ty
+check info _ _ = ?chk
+
+dec : Name -> Fn -> Info -> Maybe Info
+dec name fn info =
+  let Nothing = find name info.decs
+    | Just _ => Nothing in
+  Just $ appendDecs (MkKV name fn) info
+
+def : Name -> Fn -> Info -> Maybe Info
+def name fn info = ?bind
 
 data Parsed : Type where
   EOF : Parsed
@@ -78,7 +130,7 @@ Show Parsed where
 
 -- Lexer
 
-exact' : List Char -> Lexer ()
+exact' : Name -> Lexer ()
 exact' (a :: b) (c :: d) = if a == c then exact' b d else Nothing
 exact' [] rem = Just (rem, ())
 exact' _ _ = Nothing
@@ -86,14 +138,14 @@ exact' _ _ = Nothing
 exact : String -> Lexer ()
 exact str = exact' $ unpack str
 
-any : (Char -> Bool) -> Lexer $ List Char
+any : (Char -> Bool) -> Lexer $ Name
 any pred (a :: b) = if pred a then case any pred b of
     Just (rem, res) => Just (rem, a :: res)
     Nothing => Nothing
   else Just (a :: b, [])
 any _ _ = Just ([], [])
 
-some : (Char -> Bool) -> Lexer $ List Char
+some : (Char -> Bool) -> Lexer $ Name
 some pred (a :: b) = if pred a then case any pred b of
     Just (rem, res) => Just (rem, a :: res)
     Nothing => Nothing
@@ -113,15 +165,15 @@ order = ("*", L)
       |+| ("+", L)
       |+| One ("=", R)
 
-file : Defs -> Path Parsed
-file ls = 
+file : Path Parsed
+file = 
   let end = eof 
         |> Res EOF in
   let endl = exact "\n"
-        |> file ls in
+        |> file in
   let comment = exact "--"
         |> any ^ neq '\n'
-        |> file ls in
+        |> file in
   end // endl // comment
 
 -- Main
@@ -133,7 +185,7 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
-  let Just (rem, res) = solve ^ unpack str $ file []
+  let Just (rem, res) = solve ^ unpack str $ file
     | Nothing => pure $ Left "Error on parsing"
   printLn res
   pure $ Right ()

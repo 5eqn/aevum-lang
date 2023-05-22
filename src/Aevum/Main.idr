@@ -11,16 +11,12 @@ import Aevum.Util
 Name : Type
 Name = List Char
 
-data Pat : Type where
-  Cons : Name -> Pat
-  Arg : Name -> Pat -> Pat
-
 data Fn : Type where
   Lit : Name -> Fn
   Pi : Name -> Fn -> Fn -> Fn
   Lam : Name -> Fn -> Fn -> Fn
   App : Fn -> Fn -> Fn
-  Case : Fn -> List (Pat, Fn) -> Fn
+  Case : Fn -> List (Fn, Fn) -> Fn
 
 record KV where
   constructor MkKV
@@ -40,31 +36,58 @@ appendDecs : KV -> Info -> Info
 appendDecs kv info = MkInfo (kv :: info.decs) info.defs
 
 appendDefs : KV -> Info -> Info
-appendDefs kv info = MkInfo info.decs (kv :: info.defs)
+appendDefs kv info = MkInfo info.decs (kv :: info.defs) -- TODO prevent self loop
 
-match : Info -> List (Pat, Fn) -> Fn -> Maybe (Info, Fn)
+||| Match an argument against a pattern, returns new info and match result.
+match : Info -> List (Fn, Fn) -> Fn -> Maybe (Info, Fn)
 match info ls arg = foldl tryMatch Nothing ls where     -- fold over all paths
-  tryMatch : Maybe (Info, Fn) -> (Pat, Fn) -> Maybe (Info, Fn)
+  tryMatch : Maybe (Info, Fn) -> (Fn, Fn) -> Maybe (Info, Fn)
   tryMatch Nothing (pat, fn) =
     let Just info' = bindPat pat arg                    -- check and bind argument
       | Nothing => Nothing in
     Just (info', fn) where                              -- apply path if succeeded
-    bindPat : Pat -> Fn -> Maybe Info
-    bindPat (Cons a) (Lit b) =
+    bindPat : Fn -> Fn -> Maybe Info
+    bindPat (Lit a) (Lit b) =
       if a == b then Just info else Nothing
-    bindPat (Arg a x) (App f (Lit b)) =
+    bindPat (App x (Lit a)) (App f (Lit b)) =
       let Just info' = bindPat x f
         | Nothing => Nothing in
       Just $ appendDefs (MkKV a (Lit b)) info'
     bindPat _ _ = Nothing
   tryMatch res _ = res
 
+||| Bind variables across two patterns to check if their corresponding fn equals.
+diffPat : Info -> Fn -> Fn -> Maybe Info
+diffPat info (Lit a) (Lit b) = 
+  if a == b then Just info else Nothing
+diffPat info (App x (Lit a)) (App y (Lit b)) =
+  let Just info' = diffPat info x y
+    | Nothing => Nothing in
+  Just $ appendDefs (MkKV a (Lit b)) info'
+diffPat _ _ _ = Nothing
+
+||| Simplify a value.
+simp : Info -> Fn -> Fn
+simp info (Lit n) =
+  let Nothing = find n info.defs                        -- find replacement
+    | Just fn => simp info fn in
+  Lit n
+simp info (Pi id ty body) =
+  Pi id (simp info ty) (simp info body)                 -- simp argument type and body
+simp info (Lam id ty body) =
+  Lam id (simp info ty) (simp info body)                -- simp argument type and body
+simp info (App fn arg) =
+  let Lam id ty body = simp info fn                     -- if fn is applied, simplifying it yields a lambda
+    | _ => App fn arg in
+  simp (appendDefs (MkKV id arg) info) body             -- bind argument
+simp info (Case arg ls) =
+  let Nothing = match info ls arg                       -- case choice may commit
+    | Just (info', body) => simp info' body in
+  Case arg ls
+
+||| Check if two simplified term equal.
 equal : Info -> Fn -> Fn -> Bool
 equal info (Lit n) (Lit m) =
-  let Nothing = find n info.defs                        -- left simped
-    | Just fn => equal info fn (Lit m) in
-  let Nothing = find m info.defs                        -- right simped
-    | Just fn => equal info (Lit n) fn in
   n == m
 equal info (Pi n a x) (Pi m b y) =
   let True = equal info a b                             -- same argument type
@@ -74,44 +97,71 @@ equal info (Lam n a x) (Lam m b y) =
   let True = equal info a b                             -- same argument type
     | False => False in
   equal (appendDefs (MkKV n (Lit m)) info) x y          -- same body when argument replaced
-equal info (App (Lam n a x) arg) u = 
-  equal (appendDefs (MkKV n arg) info) x u              -- same when argument replaced
-equal info u (App fn arg) = equal info (App fn arg) u   -- symmetry
-equal info (Case arg ls) u =
-  let Nothing = match info ls arg                       -- case choice may commit
-    | Just (info', body) => equal info' body u in
-  let Case arg' ls' = u                                 -- if didn't commit, rhs must be cased
-    | _ => False in
+equal info (App fn arg) (App fn' arg') =
+  equal info fn fn' && equal info arg arg'              -- constructor and argument should be the same
+equal info (Case arg ls) (Case arg' ls') =
   let True = equal info arg arg'                        -- argument must equal 
     | False => False in
-  caseEq info ls ls' where                              -- all case paths equal
-  caseEq : Info -> List (Pat, Fn) -> List (Pat, Fn) -> Bool
-  caseEq info lhs rhs = foldl contains True lhs where
+  foldl contains True ls where
     contains : Bool -> (Pat, Fn) -> Bool                -- rhs contains all lhs paths
-    contains orig (pat, fn) = foldl same False rhs where
-      same : Bool -> (Pat, Fn) -> Bool                  -- one of rhs equals each lhs path
+    contains orig (pat, fn) = foldl same False ls' where
+      same : Bool -> (Pat, Fn) -> Bool                  -- one of `ls'` equals each `ls`
       same orig (pat', fn') =
-        let Just info' = bindPat pat pat'               -- check and replace argument
+        let Just info' = diffPat info pat pat'          -- check and replace argument
           | Nothing => orig in
-        equal info' fn fn' where                        -- path with same pattern determines if each lhs path is contained
-        bindPat : Pat -> Pat -> Maybe Info
-        bindPat (Cons a) (Cons b) = 
-          if a == b then Just info else Nothing
-        bindPat (Arg a x) (Arg b y) =
-          let Just info' = bindPat x y
-            | Nothing => Nothing in
-          Just $ appendDefs (MkKV a (Lit b)) info'
-        bindPat _ _ = Nothing
-equal info u (Case arg ls) = equal info (Case arg ls) u -- symmetry
+        equal info' fn fn'                              -- path with same pattern determines if each `ls` is contained
 equal info _ _ = False
 
--- handle lambda and case here, bind dec and def by changing arg `info`. `unify` is not needed in case split.
-check : Info -> Fn -> Fn -> Bool
-check info (Lit name) ty =
-  let Just fn = find name info.decs
+||| Check if a simplified value is of a simplified type.
+check : Info -> (value : Fn) -> (type : Fn) -> Bool
+check info (Lit n) fn =
+  let Just ty = find n info.decs                        -- lookup
     | Nothing => False in
-  equal info fn ty
-check info _ _ = ?chk
+  equal info ty fn
+check info (Pi _ _ _) (Lit n) = pack n == "Type"        -- pi has type "Type"
+check info (Lam n a x) (Pi m b y) = 
+  let info' = appendDefs (MkKV n (Lit m)) info in       -- replace and check
+  let info' = appendDecs (MkKV n a) info' in
+  let info' = appendDecs (MkKV m b) info' in
+  equal info a b && check info' x y
+check info (App (Lit n) arg) ty =
+  let Just (Pi id ty body) = find n info.decs
+    | _ => False in
+  let info' = appendDefs (MkKV id arg) info in          -- bind constructor pi
+  equal info' body ty
+check info (Case arg ls) ty =
+  foldl checkPath True ls where
+    checkPath : Bool -> (Pat, Fn) -> Bool
+    checkPath orig (pat, fn) =
+      let Just fn' = patType pat                        -- get pi type of constructor
+        | Nothing => False in
+      let Just val' = patVal pat                        -- get value to bind with arg
+        | Nothing => False in
+      let Just info' = bindPat val' fn'                 -- bind arguments of pattern from it's pi type
+        | Nothing => False in
+      check info' fn ty where                           -- check each path
+      patType : Pat -> Maybe Fn
+      patType (Cons a) = find a info.decs
+      patType (Arg a x) = patType x
+      patVal : Pat -> Maybe Fn
+      patVal (Cons a) = Just (Lit a)
+      patVal (Arg a x) =
+        let Just fn = patVal x
+          | Nothing => Nothing in
+        Just (App fn (Lit a))
+      bindPat : Fn -> Fn -> Maybe Info
+      bindPat val (Lit a) =
+        let Lit id = arg                                -- bind arg decs and defs only when arg is literal
+          | _ => Just info in
+        let info' = appendDecs (MkKV id (Lit a)) info in
+        let info' = appendDefs (MkKV id val) info' in
+        Just info'
+      bindPat val (Pi id ty body) =
+        let Just info' = bindPat val body               -- bind argument literal
+          | Nothing => Nothing in
+        Just $ appendDecs (MkKV id ty) info'            -- TODO argument of original pattern is not bound!
+      bindPat _ _ = Nothing
+check info _ _ = False
 
 dec : Name -> Fn -> Info -> Maybe Info
 dec name fn info =

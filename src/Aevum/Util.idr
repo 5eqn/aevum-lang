@@ -16,16 +16,6 @@ pref (a :: b) (c :: d) = if (a == c) then pref b d else False
 pref _ [] = False
 pref [] _ = True
 
-||| Equal function with letters.
-public export
-eq : Eq a => a -> a -> Bool
-eq = (==)
-
-||| Reverted equal function.
-public export
-neq : Eq a => a -> a -> Bool
-neq = (/=)
-
 ||| Function application with lower precedence.
 public export
 (^) : (a -> b) -> a -> b

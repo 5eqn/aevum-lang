@@ -1,4 +1,4 @@
-module Aevum.Typecheck
+module Aevum.Type
 
 infixl 3 @+
 infixl 4 @:

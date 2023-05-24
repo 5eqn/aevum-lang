@@ -47,3 +47,10 @@ s : F (\n => case n of
   X => X
   Y m => X)
 s = ?zero
+
+-- Directly apply lambda
+r : G
+r = (\x => x) X
+
+q : Type -> Type
+q = \ty => ty -> ty

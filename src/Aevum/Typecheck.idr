@@ -1,5 +1,9 @@
 module Aevum.Typecheck
 
+infixl 3 @+
+infixl 4 @:
+infixl 4 @=
+
 -- Datatypes
 
 ||| Type of function name.
@@ -23,24 +27,26 @@ record Info where
   decs : List (Name, Fn)
   defs : List (Name, Fn)
 
+||| Represent a declaration OR definition.
+public export
+data DecOrDef : Type where
+  (@:) : Name -> Fn -> DecOrDef
+  (@=) : Name -> Fn -> DecOrDef
+
 ||| Equivalent to hashmap "find".
 public export
 find : Name -> List (Name, Fn) -> Maybe Fn
 find name [] = Nothing
 find name ((key, val) :: b) = if key == name then Just val else find name b
 
-infixl 3 <+
-infixl 3 <*
-
-||| Append declaration.
+||| Append declaration or definition.
 public export
-(<+) : Info -> (Name, Fn) -> Info
-(<+) info kv = MkInfo (kv :: info.decs) info.defs
-
-||| Append definition.
-public export
-(<*) : Info -> (Name, Fn) -> Info
-(<*) info kv = MkInfo info.decs (kv :: info.defs)       -- TODO prevent self loop
+(@+) : Info -> DecOrDef -> Info
+(@+) info (name @: fn) = MkInfo ((name, fn) :: info.decs) info.defs
+(@+) info (name @= fn) =
+  let Lit name' = fn
+    | _ => MkInfo info.decs ((name, fn) :: info.defs) in
+  if name == name' then info else MkInfo info.decs ((name, fn) :: info.defs)
 
 -- Case split
 
@@ -58,7 +64,7 @@ match info ls arg = foldl tryMatch Nothing ls where     -- fold over all paths
     bindPat (App x (Lit a)) (App f (Lit b)) =
       let Just info' = bindPat x f
         | Nothing => Nothing in
-      Just $ info' <* (a, Lit b)
+      Just $ info' @+ a @= Lit b
     bindPat _ _ = Nothing
   tryMatch res _ = res
 
@@ -69,16 +75,16 @@ diffPat info (Lit a) (Lit b) =
 diffPat info (App x (Lit a)) (App y (Lit b)) =
   let Just info' = diffPat info x y
     | Nothing => Nothing in
-  Just $ info' <* (a, Lit b)
+  Just $ info' @+ a @= Lit b
 diffPat _ _ _ = Nothing
 
 ||| Bind declaration for a pattern when it applies.
 declPat : Info -> Fn -> Maybe Info
 declPat info (Lit a) = Just info
 declPat info (App (Pi id ty body) (Lit a)) =
-  let Just info' = declPat (info <* (id, Lit a) <+ (id, ty)) body
+  let Just info' = declPat (info @+ id @= Lit a @+ id @: ty) body
     | Nothing => Nothing in
-  Just $ info' <+ (a, ty)
+  Just $ info' @+ a @: ty
 declPat info _ = Nothing
 
 -- Typecheck
@@ -96,7 +102,7 @@ simp info (Lam id body) =
 simp info (App fn arg) =
   let Lam id body = simp info fn                        -- if fn is applied, simplifying it yields a lambda
     | _ => App fn arg in
-  simp (info <* (id, arg)) body                         -- bind argument
+  simp (info @+ id @= arg) body                         -- bind argument
 simp info (Case arg ls) =
   let Nothing = match info ls arg                       -- case choice may commit
     | Just (info', body) => simp info' body in
@@ -109,9 +115,9 @@ equal info (Lit n) (Lit m) =
 equal info (Pi n a x) (Pi m b y) =
   let True = equal info a b                             -- same argument type
     | False => False in
-  equal (info <* (n, Lit m)) x y                        -- same body when argument replaced
+  equal (info @+ n @= Lit m) x y                        -- same body when argument replaced
 equal info (Lam n x) (Lam m y) =
-  equal (info <* (n, Lit m)) x y                        -- same body when argument replaced
+  equal (info @+ n @= Lit m) x y                        -- same body when argument replaced
 equal info (App fn arg) (App fn' arg') =
   equal info fn fn' && equal info arg arg'              -- constructor and argument should be the same
 equal info (Case arg ls) (Case arg' ls') =
@@ -136,11 +142,11 @@ check info (Lit n) fn =
   equal info ty fn
 check info (Pi _ _ _) (Lit n) = pack n == "Type"        -- pi has type "Type"
 check info (Lam n x) (Pi m b y) = 
-  check (info <* (n, Lit m) <+ (n, b) <+ (m, b)) x y
+  check (info @+ n @= Lit m @+ n @: b @+ m @: b) x y
 check info (App (Lit n) arg) ty =
   let Just (Pi id ty body) = find n info.decs
     | _ => False in
-  equal (info <* (id, arg)) body ty
+  equal (info @+ id @= arg) body ty
 check info (Case arg ls) ty =
   foldl checkPath True ls where
     checkPath : Bool -> (Fn, Fn) -> Bool
@@ -149,5 +155,5 @@ check info (Case arg ls) ty =
         | Nothing => False in
       let Lit n = arg                                   -- bind pattern to arg when it's literal
         | _ => check info' fn ty in
-      check (info' <* (n, pat)) fn ty
+      check (info' @+ n @= pat) fn ty
 check info _ _ = False

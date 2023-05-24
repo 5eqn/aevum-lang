@@ -9,15 +9,6 @@ import Aevum.Typecheck
 
 -- Parsed Datatype
 
-dec : Name -> Fn -> Info -> Maybe Info
-dec name fn info =
-  let Nothing = find name info.decs
-    | Just _ => Nothing in
-  Just $ info <+ (name, fn)
-
-def : Name -> Fn -> Info -> Maybe Info
-def name fn info = ?bind
-
 data Parsed : Type where
   EOF : Parsed
 

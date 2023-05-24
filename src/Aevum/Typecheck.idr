@@ -20,6 +20,17 @@ data Fn : Type where
   App : Fn -> Fn -> Fn
   Case : Fn -> List (Fn, Fn) -> Fn
 
+||| Serialize function.
+public export covering
+Show Fn where
+  show (Lit name) = pack name
+  show (Pi id ty body) = "(" ++ pack id ++ " : " ++ show ty ++ ") -> " ++ show body
+  show (Lam id body) = "\\" ++ pack id ++ " => " ++ show body
+  show (App fn arg) = show fn ++ " (" ++ show arg ++ ")"
+  show (Case arg ls) = "case " ++ show arg ++ " of { " ++ foldl showCases "" ls ++ "}" where
+    showCases : String -> (Fn, Fn) -> String
+    showCases orig (pat, fn) = orig ++ show pat ++ " => "  ++ show fn ++ "; "
+
 ||| Existing declaration and definition to be remembered.
 public export
 record Info where
@@ -142,9 +153,9 @@ check info (Lit n) fn =
   equal info ty fn
 check info (Pi _ _ _) (Lit n) = pack n == "Type"        -- pi has type "Type"
 check info (Lam n x) (Pi m b y) = 
-  check (info @+ n @= Lit m @+ n @: b @+ m @: b) x y
+  check (info @+ n @= Lit m @+ n @: b @+ m @: b) x y    -- bind lambda and pi arguments
 check info (App (Lit n) arg) ty =
-  let Just (Pi id ty body) = find n info.decs
+  let Just (Pi id ty body) = find n info.decs           -- bind applied argument
     | _ => False in
   equal (info @+ id @= arg) body ty
 check info (Case arg ls) ty =

@@ -15,11 +15,11 @@ f = \n => case n of
   Y m => Y (f m)
 
 -- "Add" function of A.
-g : (n : G) -> A n -> A (f n)
-g = \n => case n of
+g : (m : G) -> A m -> A (f m)
+g = \u => case u of
   X => \x => x
-  Y m => \y => case y of
-    V m x => V (f m) (g m x)
+  Y p => \y => case y of
+    V p x => V (f p) (g p x)
 
 -- Fn-dependent type.
 data F : (G -> G) -> Type where
@@ -28,8 +28,12 @@ data F : (G -> G) -> Type where
     Y m => Y m)
   Zero : F (\x => X)
 
--- Function match
+-- Function match.
 t : F (\y => case y of
   X => Y X
   Y u => Y u)
 t = Default
+
+-- Match error.
+err : F (\y => f y)
+err = Zero

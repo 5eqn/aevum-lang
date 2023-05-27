@@ -14,11 +14,29 @@ data Parsed : Type where
   Dec : (id : Name) -> (type : Fn) -> Parsed -> Parsed
   Def : (id : Name) -> (val : Fn) -> Parsed -> Parsed
 
+data Message : Type where
+  End : Message
+  Info : (msg : String) -> Message -> Message
+  Err : (msg : String) -> Message -> Message
+
 covering
 Show Parsed where
   show EOF = "EOF"
   show (Dec id x y) = "Dec " ++ pack id ++ " : " ++ show x ++ ",\n" ++ show y
   show (Def id x y) = "Def " ++ pack id ++ " = " ++ show x ++ ",\n" ++ show y
+
+Show Message where
+  show End = "End"
+  show (Info msg tl) = "[Info] " ++ msg ++ ",\n" ++ show tl
+  show (Err msg tl) = "[Error] " ++ msg ++ ",\n" ++ show tl
+
+chk : (List Dec, List Def) -> Fn -> Maybe Fn -> Message -> Message
+chk (decs, defs) val fn msg =
+  let Just ty = fn
+    | Nothing => Err "value not defined" msg in
+  let Fail err = check decs defs (norm id val) (norm id ty) 
+    | Success => Info (show val ++ " : " ++ show ty) msg in
+  Err (show val ++ " is not " ++ show ty ++ ": " ++ err) msg
 
 -- Lexer
 
@@ -83,14 +101,16 @@ oprt (op, bd) path =
         |> path
         |+= \v => Res $ App (App (Lit $ unpack op) u) v
 
-term : Info -> Path Fn
-term ls =
+term : Path Fn
+term =
   let ident = kwd
         |>= \id => Res ^ Lit id in
   let block = exact "(" 
-        |> term ls 
+        |> term 
         |< exact ")" in
-  let atom = ident // block in      -- eg. `(R -> S)` and `var`
+  let hole = exact "?"
+        |> Res Hole in
+  let atom = hole // ident // block in      -- eg. `(R -> S)` and `var`
   let single = atom
         |*= \u => atom
         |+= \v => Res ^ App u v in
@@ -99,7 +119,7 @@ term ls =
   let clause = exact "\n"
         |> comp
         |+= \u => exact "=>"
-        |> term ls
+        |> term
         |+= \v => Res ^ (u, v) in
   let clauses = clause
         |+= \u => Res ^ [u]
@@ -114,48 +134,48 @@ term ls =
   let pi = exact "("                -- eg. `(a : Nat) -> Type`
         |> kwd
         |>= \u => exact ":"
-        |> term ls
+        |> term
         |+= \v => exact ")"
         |> exact "->"
-        |> term ls 
+        |> term 
         |+= \w => Res ^ Pi u v w in
   let pi' = val                     -- eg. `Nat -> Type`
         |*= \u => exact "->"
-        |> term ls 
+        |> term 
         |+= \v => Res ^ Pi ['_'] u v in
   let lam = exact "\\"
         |> kwd
         |>= \u => exact "=>"
-        |> term ls
+        |> term
         |+= \v => Res ^ Lam u v in
   lam // pi // pi'
 
-file : Info -> Path Parsed
-file ls = 
+file : (List Dec, List Def) -> Path (Parsed, Message)
+file info@(decs, defs) = 
   let end = eof 
-        |> Res EOF in
+        |> Res (EOF, End) in
   let endl = exact "\n"
-        |> file ls in
+        |> file info in
   let comment = exact "--"
         |> any ^ (/=) '\n'
-        |> file ls in
+        |> file info in
   let dec = kwd
         |>= \id => exact ":"
-        |> term ls
-        |+= \u => file ls 
-        |+= \v => Res ^ Dec id u v in
+        |> term
+        |+= \u => file (id @: u :: decs, defs)
+        |+= \(v, msg) => Res (Dec id u v, chk info u (Just type) msg) in
   let dat = exact "data"
         |> kwd
         |>= \id => exact ":"
-        |> term ls
+        |> term
         |+= \u => exact "where"
-        |> file ls 
-        |+= \v => Res ^ Dec id u v in
+        |> file (id @: u :: decs, defs)
+        |+= \(v, msg) => Res (Dec id u v, chk info u (Just type) msg) in
   let def = kwd
         |>= \id => exact "="
-        |> term ls
-        |+= \u => file ls 
-        |+= \v => Res ^ Def id u v in
+        |> term
+        |+= \u => file (decs, id @= u :: defs)
+        |+= \(v, msg) => Res (Def id u v, chk info u (findDec id decs) msg) in
   end // endl // comment // dec // dat // def
 
 -- Main
@@ -167,9 +187,10 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
-  let Just (rem, res) = solve ^ unpack str $ file (MkInfo [] [])
+  let Just (rem, (res, msg)) = solve ^ unpack str $ file ([unpack "Type" @: type], [])
     | Nothing => pure $ Left "Error on parsing"
   printLn res
+  printLn msg
   pure $ Right ()
 
 main : IO ()
@@ -177,6 +198,7 @@ main = do
   (_ :: (opt :: _)) <- getArgs
     | _ => printLn "No file specified"
   res <- withFile opt Read onError onOpen
+  -- printLn (norm id (Case (App (Lit ['Y']) (Lit ['n'])) [(Lit ['x'], Lit ['y']), (App (Lit ['Y']) (Lit ['x']), Lit ['x'])]))
   case res of
     Left err => printLn err
     Right () => pure ()

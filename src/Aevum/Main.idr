@@ -34,7 +34,7 @@ chk : (List Dec, List Def) -> Fn -> Maybe Fn -> Message -> Message
 chk (decs, defs) val fn msg =
   let Just ty = fn
     | Nothing => Err "value not defined" msg in
-  let Fail err = check decs defs (norm id val) (norm id ty) 
+  let Fail err = check decs defs (norm decs id val) (norm decs id ty) 
     | Success => Info (show val ++ " : " ++ show ty) msg in
   Err (show val ++ " is not " ++ show ty ++ ": " ++ err) msg
 

@@ -12,7 +12,7 @@ data A : G -> Type where
 f : G -> G
 f = \n => case n of
   X => X
-  Y m => Y (f m)
+  Y r => Y (f r)  -- r cannot be m
 
 -- "Add" function of A.
 g : (m : G) -> A m -> A (f m)
@@ -20,6 +20,13 @@ g = \u => case u of
   X => \x => x
   Y p => \y => case y of
     V p x => V (f p) (g p x)
+
+-- Wrong version of `g`.
+g : (m : G) -> A m -> A (f m)
+g = \u => case u of
+  X => \x => x
+  Y p => \y => case y of
+    V q x => V (f p) (g p x)
 
 -- Fn-dependent type.
 data F : (G -> G) -> Type where

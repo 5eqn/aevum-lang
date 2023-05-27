@@ -40,47 +40,38 @@ chk (decs, defs) val fn msg =
 
 -- Lexer
 
-exact' : List Char -> Lexer ()
-exact' (a :: b) (c :: d) = if a == c then exact' b d else Nothing
-exact' [] rem = Just (rem, ())
-exact' _ _ = Nothing
-
-exact : String -> Lexer ()
-exact str = exact' $ unpack str
-
-any : (Char -> Bool) -> Lexer $ List Char
-any pred (a :: b) = if pred a then case any pred b of
-    Just (rem, res) => Just (rem, a :: res)
-    Nothing => Nothing
-  else Just (a :: b, [])
-any _ _ = Just ([], [])
-
-some : (Char -> Bool) -> Lexer $ List Char
-some pred (a :: b) = if pred a then case any pred b of
-    Just (rem, res) => Just (rem, a :: res)
-    Nothing => Nothing
-  else Nothing
-some _ _ = Nothing
-
 reserved : List String
-reserved =
-  [ "data"
-  , "where"
-  , "case"
-  , "of"
-  ]
+reserved = ["data", "where", "case", "of"]
 
-kwd : Lexer $ List Char
-kwd str =
-  let Just (rem, res) = some identChar str
-    | Nothing => Nothing in
-  if pack res `elem` reserved then Nothing else Just (rem, res)
+exactPack : List Char -> Parser ()
+exactPack (a :: b) = P $ \str => case str of
+  c :: d => if a == c then solve (exactPack b) d else Err ""
+  [] => Err "exact match fail"
+exactPack [] = P $ \rem => Res rem ()
 
-eof : Lexer ()
-eof [] = Just ([], ())
-eof _ = Nothing
+exact : String -> Parser ()
+exact str = exactPack $ unpack str
 
--- Path
+some : (Char -> Bool) -> (nullable : Bool) -> Parser (List Char)
+some pred nullable = P $ \str => case str of
+  a :: b => if pred a then case solve (some pred True) b of
+      Res rem res => Res rem (a :: res)
+      Err e => Err e
+    else if nullable then Res (a :: b) [] else Err "didn't match any"
+  [] => if nullable then Res [] [] else Err "didn't match any"
+
+kwd : Parser (List Char)
+kwd = P $ \str =>
+  let Res rem res = solve (some identChar False) str
+    | Err e => Err e in
+  if pack res `elem` reserved then Err "reserved" else Res rem res
+
+eof : Parser ()
+eof = P $ \str => case str of
+  [] => Res [] ()
+  _ => Err "not eof"
+
+-- Parser
 
 data Binding = L | R
 
@@ -89,94 +80,61 @@ order = ("*", L)
       |+| ("+", L)
       |+| One ("=", R)
 
-oprt : (String, Binding) -> Path Fn -> Path Fn
-oprt (op, bd) path =
+oprt : (String, Binding) -> Parser Fn -> Parser Fn
+oprt pair@(op, bd) path =
   case bd of
-    R => path 
-        |*= \u => exact op
-        |> oprt (op, bd) path
-        |+= \v => Res $ App (App (Lit $ unpack op) u) v
-    L => path 
-        |*= \u => exact op
-        |> path
-        |+= \v => Res $ App (App (Lit $ unpack op) u) v
+    R => do u <- path; restr u
+    L => do u <- path; restl u where
+      app : Fn -> Fn -> Fn
+      app u v = App (App (Lit $ unpack op) u) v
+      restr : Fn -> Parser Fn
+      restr u = (do exact op; v <- oprt pair path; pure $ app u v) <|> pure u
+      restl : Fn -> Parser Fn
+      restl u = (do exact op; v <- path; restl $ app u v) <|> pure u
 
-term : Path Fn
+term : Parser Fn
 term =
-  let ident = kwd
-        |>= \id => Res ^ Lit id in
-  let block = exact "(" 
-        |> term 
-        |< exact ")" in
-  let hole = exact "?"
-        |> Res Hole in
-  let atom = hole // ident // block in      -- eg. `(R -> S)` and `var`
-  let single = atom
-        |*= \u => atom
-        |+= \v => Res ^ App u v in
-  let comp = (order, single)        -- eg. `f x + y * z`
-        |/= oprt in
-  let clause = exact "\n"
-        |> comp
-        |+= \u => exact "=>"
-        |> term
-        |+= \v => Res ^ (u, v) in
-  let clauses = clause
-        |+= \u => Res ^ [u]
-        |*= \v => clause
-        |+= \w => Res ^ (w :: v) in
-  let cased = exact "case"
-        |> comp
-        |+= \u => exact "of"
-        |> clauses
-        |+= \v => Res ^ Case u v in
-  let val = cased // comp in
-  let pi = exact "("                -- eg. `(a : Nat) -> Type`
-        |> kwd
-        |>= \u => exact ":"
-        |> term
-        |+= \v => exact ")"
-        |> exact "->"
-        |> term 
-        |+= \w => Res ^ Pi u v w in
-  let pi' = val                     -- eg. `Nat -> Type`
-        |*= \u => exact "->"
-        |> term 
-        |+= \v => Res ^ Pi ['_'] u v in
-  let lam = exact "\\"
-        |> kwd
-        |>= \u => exact "=>"
-        |> term
-        |+= \v => Res ^ Lam u v in
-  lam // pi // pi'
+  let hole = do exact "?"; pure Hole in
+  let ident = do id <- kwd; pure $ Lit id in
+  let block = do exact "("; u <- term; exact ")"; pure u in
+  let atom = hole <|> ident <|> block in
+  let single = do u <- atom; rests atom u in
+  let comp = frac order single oprt in
+  let clause = do exact "\n"; u <- comp; exact "=>"; v <- term; pure (u, v) in
+  let cases = do u <- clause; restc clause [u] in
+  let cased = do exact "case"; u <- comp; exact "of"; v <- cases; pure $ Case u v in
+  let val = cased <|> comp in
+  let pi = do exact "("; u <- kwd; exact ":"; v <- term; exact ")";
+              exact "->"; w <- term; pure $ Pi u v w in
+  let simpPi = do u <- val; restp u in
+  let lam = do exact "\\"; u <- kwd; exact "=>"; v <- term; pure $ Lam u v in
+  lam <|> pi <|> simpPi where
+    frac : Pos a -> Parser b -> (a -> Parser b -> Parser b) -> Parser b
+    frac (One x) p f = f x p
+    frac (hd |+| tl) p f = let q = f hd p in frac tl q f
+    rests : Parser Fn -> Fn -> Parser Fn
+    rests p u = (do v <- p; rests p (App u v)) <|> pure u
+    restc : Parser a -> List a -> Parser (List a)
+    restc p u = (do v <- p; restc p (v :: u)) <|> pure u
+    restp : Fn -> Parser Fn
+    restp u = (do exact "->"; v <- term; restp (Pi ['_'] u v)) <|> pure u
 
-file : (List Dec, List Def) -> Path (Parsed, Message)
+
+file : (List Dec, List Def) -> Parser (Parsed, Message)
 file info@(decs, defs) = 
-  let end = eof 
-        |> Res (EOF, End) in
-  let endl = exact "\n"
-        |> file info in
-  let comment = exact "--"
-        |> any ^ (/=) '\n'
-        |> file info in
-  let dec = kwd
-        |>= \id => exact ":"
-        |> term
-        |+= \u => file (id @: u :: decs, defs)
-        |+= \(v, msg) => Res (Dec id u v, chk info u (Just type) msg) in
-  let dat = exact "data"
-        |> kwd
-        |>= \id => exact ":"
-        |> term
-        |+= \u => exact "where"
-        |> file (id @: u :: decs, defs)
-        |+= \(v, msg) => Res (Dec id u v, chk info u (Just type) msg) in
-  let def = kwd
-        |>= \id => exact "="
-        |> term
-        |+= \u => file (decs, id @= u :: defs)
-        |+= \(v, msg) => Res (Def id u v, chk info u (findDec id decs) msg) in
-  end // endl // comment // dec // dat // def
+  let end = do eof; pure (EOF, End) in
+  let endl = do exact "\n"; file info in
+  let comment = do exact "--"; _ <- some (/= '\n') True; file info in
+  let dec = do id <- kwd; exact ":"; u <- term;
+               (v, msg) <- file (id @: u :: decs, defs);
+               pure (Dec id u v, chk info u (Just type) msg) in
+  let dat = do exact "data"; id <- kwd; exact ":"; u <- term; exact "where";
+               (v, msg) <- file (id @: u :: decs, defs);
+               pure (Dec id u v, chk info u (Just type) msg) in
+  let def = do id <- kwd; exact "="; u <- term;
+               (v, msg) <- file (decs, id @= u :: defs);
+               pure (Def id u v, chk info u (findDec id decs) msg) in
+  end <|> endl <|> comment <|> dec <|> dat <|> def
 
 -- Main
 
@@ -187,8 +145,8 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
-  let Just (rem, (res, msg)) = solve ^ unpack str $ file ([unpack "Type" @: type], [])
-    | Nothing => pure $ Left "Error on parsing"
+  let Res rem (res, msg) = solve (file ([unpack "Type" @: type], [])) (unpack str)
+    | Err err => pure $ Left ("Error on parsing: " ++ err)
   printLn res
   printLn msg
   pure $ Right ()
@@ -198,7 +156,6 @@ main = do
   (_ :: (opt :: _)) <- getArgs
     | _ => printLn "No file specified"
   res <- withFile opt Read onError onOpen
-  -- printLn (norm id (Case (App (Lit ['Y']) (Lit ['n'])) [(Lit ['x'], Lit ['y']), (App (Lit ['Y']) (Lit ['x']), Lit ['x'])]))
   case res of
     Left err => printLn err
     Right () => pure ()

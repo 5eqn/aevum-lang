@@ -75,8 +75,8 @@ eof = P $ \str => case str of
 
 data Binding = L | R
 
-order : Pos (String, Binding)
-order = ("*", L) |+| ("+", L) |+| One ("=", R)
+order : List (String, Binding)
+order = [("*", L), ("+", L), ("=", R)]
 
 oprt : (String, Binding) -> Parser Fn -> Parser Fn
 oprt pair@(op, bd) path =
@@ -107,9 +107,9 @@ term =
   let simpPi = do u <- val; restp u in
   let lam = do exact "\\"; u <- kwd; exact "=>"; v <- term; pure $ Lam u v in
   lam <|> pi <|> simpPi where
-    frac : Pos a -> Parser b -> (a -> Parser b -> Parser b) -> Parser b
-    frac (One x) p f = f x p
-    frac (hd |+| tl) p f = let q = f hd p in frac tl q f
+    frac : List a -> Parser b -> (a -> Parser b -> Parser b) -> Parser b
+    frac [] p f = p
+    frac (hd :: tl) p f = let q = f hd p in frac tl q f
     rests : Parser Fn -> Fn -> Parser Fn
     rests p u = (do v <- p; rests p (App u v)) <|> pure u
     restc : Parser a -> List a -> Parser (List a)

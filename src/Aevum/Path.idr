@@ -6,7 +6,7 @@ public export
 data ParseResult a = Res (List Char) a | Err String
 
 public export
-record Parser (a : Type) where
+record Parser a where
   constructor P
   solve : List Char -> ParseResult a
 
@@ -31,7 +31,9 @@ Alternative Parser where
   p <|> q = P $ \a =>
     case solve p a of
       Res b x => Res b x
-      Err e => solve q a
+      Err e => case solve q a of
+        Res b x => Res b x
+        Err e' => Err (e ++ ",\n" ++ e')
 
 public export
 Monad Parser where

@@ -12,7 +12,7 @@ data A : G -> Type where
 f : G -> G
 f = \n => case n of
   X => X
-  Y r => Y (f r)  -- r cannot be m
+  Y m => Y (f m)  -- m cannot be u because in g, u is declared
 
 -- "Add" function of A.
 g : (m : G) -> A m -> A (f m)
@@ -22,8 +22,8 @@ g = \u => case u of
     V p x => V (f p) (g p x)
 
 -- Wrong version of `g`.
-g : (m : G) -> A m -> A (f m)
-g = \u => case u of
+h : (m : G) -> A m -> A (f m)
+h = \u => case u of
   X => \x => x
   Y p => \y => case y of
     V q x => V (f p) (g p x)

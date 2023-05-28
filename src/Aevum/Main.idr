@@ -30,12 +30,12 @@ Show Message where
   show (Info msg tl) = "[Info] " ++ msg ++ ",\n" ++ show tl
   show (Err msg tl) = "[Error] " ++ msg ++ ",\n" ++ show tl
 
-chk : (List Dec, List Def) -> Fn -> Maybe Fn -> Message -> Message
+chk : (List Dec, List Def) -> Fn -> Either String Fn -> Message -> Message
 chk (decs, defs) val fn msg =
-  let Just ty = fn
-    | Nothing => Err "value not defined" msg in
-  let Fail err = check decs defs (norm decs id val) (norm decs id ty) 
-    | Success => Info (show val ++ " : " ++ show ty) msg in
+  let Right ty = fn
+    | Left _ => Err "value not defined" msg in
+  let Left err = normCheck decs defs val ty
+    | Right () => Info (show val ++ " : " ++ show ty) msg in
   Err (show val ++ " is not " ++ show ty ++ ": " ++ err) msg
 
 -- Lexer
@@ -45,7 +45,7 @@ reserved = ["data", "where", "case", "of"]
 
 exactPack : List Char -> Parser ()
 exactPack (a :: b) = P $ \str => case str of
-  c :: d => if a == c then solve (exactPack b) d else Err ""
+  c :: d => if a == c then solve (exactPack b) d else Err "exact match fail"
   [] => Err "exact match fail"
 exactPack [] = P $ \rem => Res rem ()
 
@@ -64,21 +64,19 @@ kwd : Parser (List Char)
 kwd = P $ \str =>
   let Res rem res = solve (some identChar False) str
     | Err e => Err e in
-  if pack res `elem` reserved then Err "reserved" else Res rem res
+  if pack res `elem` reserved then Err (pack res ++ " is reserved") else Res rem res
 
 eof : Parser ()
 eof = P $ \str => case str of
   [] => Res [] ()
-  _ => Err "not eof"
+  _ => Err "expected eof"
 
 -- Parser
 
 data Binding = L | R
 
 order : Pos (String, Binding)
-order = ("*", L) 
-      |+| ("+", L)
-      |+| One ("=", R)
+order = ("*", L) |+| ("+", L) |+| One ("=", R)
 
 oprt : (String, Binding) -> Parser Fn -> Parser Fn
 oprt pair@(op, bd) path =
@@ -127,10 +125,10 @@ file info@(decs, defs) =
   let comment = do exact "--"; _ <- some (/= '\n') True; file info in
   let dec = do id <- kwd; exact ":"; u <- term;
                (v, msg) <- file (id @: u :: decs, defs);
-               pure (Dec id u v, chk info u (Just type) msg) in
+               pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
   let dat = do exact "data"; id <- kwd; exact ":"; u <- term; exact "where";
                (v, msg) <- file (id @: u :: decs, defs);
-               pure (Dec id u v, chk info u (Just type) msg) in
+               pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
   let def = do id <- kwd; exact "="; u <- term;
                (v, msg) <- file (decs, id @= u :: defs);
                pure (Def id u v, chk info u (findDec id decs) msg) in
@@ -145,7 +143,7 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
-  let Res rem (res, msg) = solve (file ([unpack "Type" @: type], [])) (unpack str)
+  let Res rem (res, msg) = solve (file ([unpack "Type" @: (Lit $ unpack "Type")], [])) (unpack str)
     | Err err => pure $ Left ("Error on parsing: " ++ err)
   printLn res
   printLn msg

@@ -10,6 +10,11 @@ Syntax is similar to Idris2, but with an eye on performance.
 idris2 --build
 ```
 
+## Current Features
+
+- Monadic Parser (192 lines)
+- Dependent Typecheck (169 lines)
+
 ## Targeted Features
 
 ### Purely Functional
@@ -150,7 +155,7 @@ fraction of code is changed.
 #### Experiment (Current)
 
 - [ ] Test in a toy language with clear syntax
-  - [ ] Parser
+  - [x] Parser
   - [ ] LLVM Code Emitting
 
 #### Finale

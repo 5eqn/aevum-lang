@@ -19,7 +19,6 @@ data Message : Type where
   Info : (msg : String) -> Message -> Message
   Err : (msg : String) -> Message -> Message
 
-covering
 Show Parsed where
   show EOF = "EOF"
   show (Dec id x y) = "Dec " ++ pack id ++ " : " ++ show x ++ ",\n" ++ show y
@@ -29,14 +28,6 @@ Show Message where
   show End = "End"
   show (Info msg tl) = "[Info] " ++ msg ++ ",\n" ++ show tl
   show (Err msg tl) = "[Error] " ++ msg ++ ",\n" ++ show tl
-
-chk : (List Dec, List Def) -> Fn -> Either String Fn -> Message -> Message
-chk (decs, defs) val fn msg =
-  let Right ty = fn
-    | Left _ => Err "value not defined" msg in
-  let Left err = normCheck decs defs val ty
-    | Right () => Info (show val ++ " : " ++ show ty) msg in
-  Err (show val ++ " is not " ++ show ty ++ ": " ++ err) msg
 
 -- Lexer
 
@@ -90,6 +81,14 @@ oprt pair@(op, bd) path =
       restl : Fn -> Parser Fn
       restl u = (do exact op; v <- path; restl $ app u v) <|> pure u
 
+chk : (List Dec, List Def) -> Fn -> Either String Fn -> Message -> Message
+chk (decs, defs) val fn msg =
+  let Right ty = fn
+    | Left _ => Err (show val ++ " is not declared") msg in
+  let Left err = normCheck decs defs val ty
+    | Right () => Info (show val ++ " : " ++ show ty) msg in
+  Err (show val ++ " is not " ++ show ty ++ ": " ++ err) msg
+
 term : Parser Fn
 term =
   let hole = do exact "?"; pure Hole in
@@ -102,8 +101,9 @@ term =
   let cases = do u <- clause; restc clause [u] in
   let cased = do exact "case"; u <- comp; exact "of"; v <- cases; pure $ Case u v in
   let val = cased <|> comp in
-  let pi = do exact "("; u <- kwd; exact ":"; v <- term; exact ")";
-              exact "->"; w <- term; pure $ Pi u v w in
+  let pi = do
+    exact "("; u <- kwd; exact ":"; v <- term; exact ")"
+    exact "->"; w <- term; pure $ Pi u v w in
   let simpPi = do u <- val; restp u in
   let lam = do exact "\\"; u <- kwd; exact "=>"; v <- term; pure $ Lam u v in
   lam <|> pi <|> simpPi where
@@ -123,15 +123,18 @@ file info@(decs, defs) =
   let end = do eof; pure (EOF, End) in
   let endl = do exact "\n"; file info in
   let comment = do exact "--"; _ <- some (/= '\n') True; file info in
-  let dec = do id <- kwd; exact ":"; u <- term;
-               (v, msg) <- file (id @: u :: decs, defs);
-               pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
-  let dat = do exact "data"; id <- kwd; exact ":"; u <- term; exact "where";
-               (v, msg) <- file (id @: u :: decs, defs);
-               pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
-  let def = do id <- kwd; exact "="; u <- term;
-               (v, msg) <- file (decs, id @= u :: defs);
-               pure (Def id u v, chk info u (findDec id decs) msg) in
+  let dec = do
+    id <- kwd; exact ":"; u <- term
+    (v, msg) <- file (id @: u :: decs, defs)
+    pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
+  let dat = do
+    exact "data"; id <- kwd; exact ":"; u <- term; exact "where"
+    (v, msg) <- file (id @: u :: decs, defs)
+    pure (Dec id u v, chk info u (Right (Lit $ unpack "Type")) msg) in
+  let def = do
+    id <- kwd; exact "="; u <- term
+    (v, msg) <- file (decs, id @= u :: defs)
+    pure (Def id u v, chk info u (findDec id decs) msg) in
   end <|> endl <|> comment <|> dec <|> dat <|> def
 
 -- Main
@@ -143,7 +146,8 @@ onOpen : File -> IO $ Either String ()
 onOpen f = do
   Right str <- fGetChars f 1048576
     | Left err => pure $ Left $ show err
-  let Res rem (res, msg) = solve (file ([unpack "Type" @: (Lit $ unpack "Type")], [])) (unpack str)
+  let Res rem (res, msg) =
+    solve (file ([unpack "Type" @: (Lit $ unpack "Type")], [])) (unpack str)
     | Err err => pure $ Left ("Error on parsing: " ++ err)
   printLn res
   printLn msg

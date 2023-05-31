@@ -124,6 +124,54 @@ exact str = exactPack $ unpack str
 - 没有检查 `case` 分支的完整性（我大致有一种方案但比较难写，下阶段推进）
 - 没有检查函数的运行是否会在有限时间内停止（但我估计不会做这玩意）
 
+## 语言特性设想
+
+这门语言将会非常重视 `Monad` 的使用，用 `Monad` 建模全部不容易被函数式编程描述的特性。事实上在人类直觉对事物的建模中，往往存在一些很飘的函数平铺在每一个时间点（例如后端要对不同时间的包进行处理），或者架设在过去和未来之间（例如涉及时间效应的状态机转移方程），这些函数并不具备确定、单一的输出结果，也难以被递归式地描述，因此用 `Monad` 来建模是合适的。
+
+### 实体组件系统
+
+现有一堆实体，每一个实体都存在角速度影响旋转角、颜色、旋转角和颜色共同影响渲染结果等现象。
+
+```haskell
+rotate : m Entity
+rotate = do
+  t <- get dt
+  a <- get angle
+  w <- get omega
+  set angle (a + t * w)
+
+f : m ()
+f = do
+  e <- getEntity
+  e <- lift $ rotate e
+  e <- lift $ render e
+  commit e
+```
+
+对于角速度影响旋转角的例子，我们首先获取全部实体；对于每个获取到的具体实体，都进行一次内存编辑再返回。这里存在两处函数：每一刻每个实体都是上一刻自身的函数；每一个实体的 `angle` 是 `angle` 和 `omega` 的函数。以 `rotate` 函数为例，我们把一个两端都有上下文的函数用两个函数来实现：前面是从上下文到确定值 `t`, `a`, `w` 的函数；后面是从确定值到上下文的 `set` 函数，这样的好处是可以采用 `Monad` 的表达形式。事实上，即使直接描述这个两端有上下文的函数，我们也需要描述起点位置例如 `get dt`、终点位置例如 `set angle` 和计算函数 `a + t * w`，需要的信息和这种 `Monad` 的表达形式是同构的。因此可以认为，`Monad` 同构于为函数的起点和终点加入上下文，这和普遍人类直觉是高度一致的。
+
+### 任务状态更新
+
+服务器存储一些任务编号和状态的键值对，收到的请求是任务编号和状态，需要服务器尝试将任务转移到新的状态，并视情况更新数据库中任务的值，返回任务更新后的状态。
+
+```haskell
+update : Index -> Value -> m Res
+update id newVal = do
+  prev <- getMem id
+  lift $ convertable prev newVal
+  setMem id newVal
+  setDb id newVal
+  reply $ MkRes newVal
+
+f : m ()
+f = do
+  id, newTask <- listen chan
+  result <- lift $ update id newTask
+  reply result.val
+```
+
+首先我们的策略是从 `chan` 中侦听包，只执行一次；每次获得包的时候尝试更新之，`update` 同时负责更新内存和数据库并自己处理锁，`convertable` 尝试搜索由 `prev` 能否构造出 `newVal`；获得更新结果后返回新任务是否停止。采用依值类型的好处是只需要描述 `Task` 不同状态之间的时间关系， `convertable` 可以自动生成对繁杂的具体情况的讨论，结合 `Monad` 可以令程序更简洁。
+
 ## TODO
 
 ### Roadmap

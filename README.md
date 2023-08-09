@@ -1,6 +1,6 @@
 # Aevum
 
-[WIP] 一个极简的纯函数式依值类型语言
+The repo will not be maintained, please check out [elaboration-scala](https://github.com/5eqn/elaboration-scala) for my latest PL research (or literally "copy")!
 
 ## Build
 
